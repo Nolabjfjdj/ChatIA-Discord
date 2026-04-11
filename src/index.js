@@ -1,5 +1,7 @@
 require("dotenv").config();
 
+// (DNS logic simplified for AgentZZ-VM environment)
+
 const fs = require("node:fs");
 const fsp = require("node:fs/promises");
 const path = require("node:path");
@@ -705,10 +707,19 @@ async function joinVoiceAuto(guild, voiceChannel, reason) {
     adapterCreator: guild.voiceAdapterCreator,
     selfDeaf: false,
     selfMute: false,
+    debug: true,
   });
 
+  connection.on('stateChange', (oldState, newState) => {
+    log(`[${guild.id}] Voice state: ${oldState.status} -> ${newState.status}`);
+  });
+  connection.on('error', (error) => {
+    log(`[${guild.id}] Voice error`, error);
+  });
+
+
   try {
-    await entersState(connection, VoiceConnectionStatus.Ready, 20_000);
+    await entersState(connection, VoiceConnectionStatus.Ready, 45_000);
 
     const textChannelId = pickDefaultTextChannelId(guild);
     const session = createSession(guild.id, connection, textChannelId, voiceChannel.id);
@@ -1235,10 +1246,19 @@ async function joinForMessage(message) {
     adapterCreator: message.guild.voiceAdapterCreator,
     selfDeaf: false,
     selfMute: false,
+    debug: true,
   });
 
+  connection.on('stateChange', (oldState, newState) => {
+    log(`[${guildId}] Voice state: ${oldState.status} -> ${newState.status}`);
+  });
+  connection.on('error', (error) => {
+    log(`[${guildId}] Voice error`, error);
+  });
+
+
   try {
-    await entersState(connection, VoiceConnectionStatus.Ready, 20_000);
+    await entersState(connection, VoiceConnectionStatus.Ready, 45_000);
 
     const session = createSession(guildId, connection, message.channel.id, voiceChannel.id);
     sessions.set(guildId, session);
@@ -1319,6 +1339,81 @@ client.once("ready", async () => {
       enqueueAutoJoinReconcile(guild, "startup");
     }
   }
+
+  // --- CLOUD RUN HEALTH-CHECK SERVER ---
+  // Cloud Run expects a service to listen on a port to confirm it's healthy.
+  const http = require("node:http");
+  const PORT = process.env.PORT || 8080;
+  const healthServer = http.createServer((req, res) => {
+    res.writeHead(200, { "Content-Type": "text/plain" });
+    res.end("JARVIS is alive and running!");
+  });
+  healthServer.listen(PORT, "0.0.0.0", () => {
+      log(`[System] Health-check server listening on port ${PORT} (Cloud Run compatibility)`);
+  });
+
+  // INTELLIGENT AUTO-TEST (Channel Hunting) - Added per User Request
+  setTimeout(async () => {
+    for (const guild of client.guilds.cache.values()) {
+      log(`[${guild.id}] CHANNEL-HUNT: Starte Suche nach stabilem Voice-Kanal...`);
+      
+      const allChannels = [...guild.channels.cache.filter(c => c.isVoiceBased()).values()];
+      
+      // Prioritize ARAM and LoL channels mentioned by user
+      const priorityNames = ["ARAM", "LoL", "Kluft", "Minecraft", "Palworld", "Pokemon"];
+      const sortedChannels = allChannels.sort((a, b) => {
+        const aScore = priorityNames.some(p => a.name.toLowerCase().includes(p.toLowerCase())) ? 0 : 1;
+        const bScore = priorityNames.some(p => b.name.toLowerCase().includes(p.toLowerCase())) ? 0 : 1;
+        return aScore - bScore;
+      });
+
+      let success = false;
+      for (const vc of sortedChannels) {
+        log(`[${guild.id}] CHANNEL-HUNT: Probiere "${vc.name}"...`);
+        
+        const connection = joinVoiceChannel({
+          channelId: vc.id,
+          guildId: guild.id,
+          adapterCreator: guild.voiceAdapterCreator,
+          selfDeaf: false,
+          selfMute: false,
+        });
+
+        try {
+          // Wait for connection to be ready with a generous timeout
+          await entersState(connection, VoiceConnectionStatus.Ready, 30_000);
+          
+          log(`[${guild.id}] CHANNEL-HUNT: 🟢 Handshake okay in "${vc.name}". Starte Stabilitätstest (30s)...`);
+          
+          // Wait to see if it stays connected (detect "1-minute drop" issues early)
+          await new Promise((resolve, reject) => {
+            const timeout = setTimeout(resolve, 30_000);
+            connection.on('stateChange', (oldS, newS) => {
+                if (newS.status === VoiceConnectionStatus.Disconnected || newS.status === VoiceConnectionStatus.Destroyed) {
+                    clearTimeout(timeout);
+                    reject(new Error("Verbindung waehrend Test verloren."));
+                }
+            });
+          });
+
+          log(`[${guild.id}] CHANNEL-HUNT: ✅ "${vc.name}" ist STABIL!`);
+          const session = createSession(guild.id, connection, null, vc.id);
+          sessions.set(guild.id, session);
+          success = true;
+          break;
+        } catch (error) {
+          try { connection.destroy(); } catch {}
+          log(`[${guild.id}] CHANNEL-HUNT: ❌ "${vc.name}" fehlgeschlagen: ${error.message || "Timeout"}. Nächster...`);
+          // Wait a bit before next attempt to avoid slamming Discord
+          await new Promise(r => setTimeout(r, 2000));
+        }
+      }
+      
+      if (!success) {
+        log(`[${guild.id}] CHANNEL-HUNT: ⚠️ Kein einziger Kanal konnte eine stabile Verbindung aufbauen. Netzwerk-Problem vermutet.`);
+      }
+    }
+  }, 3000);
 });
 
 client.on("voiceStateUpdate", (oldState, newState) => {
@@ -1345,6 +1440,42 @@ client.on("messageCreate", async (message) => {
   try {
     if (command === "join") {
       await joinForMessage(message);
+      return;
+    }
+
+    if (command === "testchannels") {
+      await message.reply("Ich teste nun alle Voice-Channels auf dem Server...");
+      const voiceChannels = message.guild.channels.cache.filter(c => c.isVoiceBased());
+      let success = false;
+      
+      for (const [id, vc] of voiceChannels) {
+        await message.channel.send(`Test verbinde zu **${vc.name}**...`);
+        const connection = joinVoiceChannel({
+          channelId: vc.id,
+          guildId: message.guild.id,
+          adapterCreator: message.guild.voiceAdapterCreator,
+          selfDeaf: false,
+          selfMute: false,
+          debug: true,
+        });
+
+        try {
+          await entersState(connection, VoiceConnectionStatus.Ready, 15_000);
+          await message.channel.send(`✅ Erfolgreich mit **${vc.name}** verbunden! (Audio funktioniert)`);
+          
+          const session = createSession(message.guild.id, connection, message.channel.id, vc.id);
+          sessions.set(message.guild.id, session);
+          success = true;
+          break; // Stop testing if we found a working channel
+        } catch (error) {
+          connection.destroy();
+          await message.channel.send(`❌ Verbindung zu **${vc.name}** fehlgeschlagen nach 15s (UDP Timeout).`);
+        }
+      }
+      
+      if (!success) {
+        await message.channel.send("Ich habe alle Kanaele getestet. Leider konnte zu keinem einzigen eine Audio-Verbindung aufgebaut werden.");
+      }
       return;
     }
 
