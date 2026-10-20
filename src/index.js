@@ -101,7 +101,7 @@ const CHAT_MAX_TOKENS = parseEnvInt(process.env.CHAT_MAX_TOKENS, 220);
 const MAX_TTS_CHARS = parseEnvInt(process.env.MAX_TTS_CHARS, 420);
 const MEMORY_MAX_MESSAGES = parseEnvInt(process.env.MEMORY_MAX_MESSAGES, 24);
 const MEMORY_MAX_CHARS = parseEnvInt(process.env.MEMORY_MAX_CHARS, 7000);
-const BOT_WAKE_WORDS = parseCsvEnv(process.env.BOT_WAKE_WORDS, ["bot", "discord bot"]);
+const BOT_WAKE_WORDS = parseCsvEnv(process.env.BOT_WAKE_WORDS, ["bot", "discord bot", "chatia", "chat ia"]);
 const IGNORE_COURTESY_ONLY = parseEnvBool(process.env.IGNORE_COURTESY_ONLY, true);
 const TTS_ERROR_NOTIFY_COOLDOWN_MS = parseEnvInt(process.env.TTS_ERROR_NOTIFY_COOLDOWN_MS, 60000);
 const MIN_PCM_BYTES = parseEnvInt(process.env.MIN_PCM_BYTES, 120_000);
@@ -396,7 +396,7 @@ function looksDirectedAtBot(text) {
     return true;
   }
 
-  return /^(qui|quoi|que|qu’est-ce que|quest-ce que|comment|où|ou|quand|pourquoi|est-ce que|est ce que|tu peux|peux-tu|peux tu|tu sais|explique|explique-moi|explique moi|dis-moi|dis moi|tu pourrais|pourrais-tu|pourrais tu|wer|was|wie|wo|wann|warum|wieso|weshalb|kannst du|bitte|erklär|erklaer|sag mal)(\s|$)/i.test(lower);
+  return /^(qui|quoi|que|qu’est-ce que|quest-ce que|comment|où|ou|quand|pourquoi|est-ce que|est ce que|c’est quoi|c'est quoi|c est quoi|ça veut dire quoi|ca veut dire quoi|tu peux|peux-tu|peux tu|tu peux me dire|tu peux expliquer|tu connais|tu sais|explique|explique-moi|explique moi|dis-moi|dis moi|tu pourrais|pourrais-tu|pourrais tu|wer|was|wie|wo|wann|warum|wieso|weshalb|kannst du|bitte|erklär|erklaer|sag mal)(\s|$)/i.test(lower);
 }
 function getChannelMemoryKey(guildId, voiceChannelId) {
   return `${guildId}:${voiceChannelId}`;
