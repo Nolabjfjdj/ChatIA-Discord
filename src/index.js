@@ -50,7 +50,7 @@ const GROQ_BASE_URL = process.env.GROQ_BASE_URL || "https://api.groq.com/openai/
 const GROQ_CHAT_MODEL = process.env.GROQ_CHAT_MODEL || "llama-3.1-8b-instant";
 const GROQ_TRANSCRIBE_MODEL =
   process.env.GROQ_TRANSCRIBE_MODEL || "whisper-large-v3-turbo";
-const LLM_PROVIDER = (process.env.LLM_PROVIDER || "groq").toLowerCase();
+const LLM_PROVIDER = (process.env.LLM_PROVIDER || "gemini").toLowerCase();
 const GEMINI_API_KEYS = [...new Set([process.env.GEMINI_API_KEY, ...(process.env.GEMINI_API_KEYS || "").split(",")].map((key) => String(key || "").trim()).filter(Boolean))];
 const GEMINI_BASE_URL = process.env.GEMINI_BASE_URL || "https://generativelanguage.googleapis.com/v1beta";
 const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-3.8-flash";
