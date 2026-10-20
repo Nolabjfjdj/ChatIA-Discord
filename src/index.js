@@ -388,7 +388,12 @@ function looksDirectedAtBot(text) {
   const lower = normalizeTranscriptText(text).toLowerCase();
   if (!lower) return false;
 
-  if (BOT_WAKE_WORDS.some((wakeWord) => lower.includes(wakeWord))) {
+  if (BOT_WAKE_WORDS.some((wakeWord) => {
+    const escaped = wakeWord.replace(/[.*+?^${}()|[\]\\]/g, "\\  if (BOT_WAKE_WORDS.some((wakeWord) => lower.includes(wakeWord))) {
+    return true;
+  }");
+    return new RegExp("(^|[^\\p{L}\\p{N}_])" + escaped + "([^\\p{L}\\p{N}_]|$)", "iu").test(lower);
+  })) {
     return true;
   }
 
@@ -977,7 +982,7 @@ async function callGeminiGenerateContent(modelName, body) {
 
     lastError = new Error("Gemini generateContent failed: HTTP " + response.statusCode + (details ? " - " + details : ""));
 
-    if (![401, 403, 429, 500, 502, 503, 504].includes(response.statusCode)) {
+    if (![401, 403, 429].includes(response.statusCode)) {
       throw lastError;
     }
 
