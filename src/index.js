@@ -1381,7 +1381,7 @@ client.once("ready", async () => {
   const PORT = process.env.PORT || 8080;
   const healthServer = http.createServer((req, res) => {
     res.writeHead(200, { "Content-Type": "text/plain" });
-    res.end("JARVIS is alive and running!");
+    res.end("Bot OK!");
   });
   healthServer.listen(PORT, "0.0.0.0", () => {
       log(`[System] Health-check server listening on port ${PORT} (Cloud Run compatibility)`);
