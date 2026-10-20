@@ -392,10 +392,7 @@ function looksDirectedAtBot(text) {
     return true;
   }
 
-  // STT setzt Fragezeichen nicht immer; typische deutsche Fragemuster helfen hier als Cooldown-Bypass.
-  return /^(wer|was|wie|wo|wann|warum|wieso|weshalb|kannst du|kannst du bitte|bitte|erklär|erklaer|sag mal)\b/i.test(
-    lower,
-  );
+  return /^(qui|quoi|que|qu’est-ce que|quest-ce que|comment|où|ou|quand|pourquoi|est-ce que|est ce que|tu peux|peux-tu|peux tu|tu sais|explique|explique-moi|explique moi|dis-moi|dis moi|tu pourrais|pourrais-tu|pourrais tu|wer|was|wie|wo|wann|warum|wieso|weshalb|kannst du|bitte|erklär|erklaer|sag mal)\b/i.test(lower);
 }
 
 function getChannelMemoryKey(guildId, voiceChannelId) {
@@ -794,11 +791,13 @@ async function captureUtterance(session, userId) {
 
   const fileStream = fs.createWriteStream(filePath);
 
+  let streamErrorHandler;
   const finished = new Promise((resolve, reject) => {
-    opusStream.on("error", reject);
-    decoder.on("error", reject);
-    wavWriter.on("error", reject);
-    fileStream.on("error", reject);
+    streamErrorHandler = reject;
+    opusStream.on("error", streamErrorHandler);
+    decoder.on("error", streamErrorHandler);
+    wavWriter.on("error", streamErrorHandler);
+    fileStream.on("error", streamErrorHandler);
     fileStream.on("finish", resolve);
   });
 
@@ -843,9 +842,13 @@ async function captureUtterance(session, userId) {
       session.processingBusy = false;
     }
   } catch (error) {
-    log(`[${session.guildId}] captureUtterance failed`, error);
+    if (!String(error?.message || error).includes("compressed data passed is corrupted")) log(`[${session.guildId}] Échec de capture audio`, error);
     await safeUnlink(filePath);
   } finally {
+    opusStream.removeListener("error", streamErrorHandler);
+    decoder.removeListener("error", streamErrorHandler);
+    wavWriter.removeListener("error", streamErrorHandler);
+    fileStream.removeListener("error", streamErrorHandler);
     session.activeCaptures.delete(userId);
   }
 }
