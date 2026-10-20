@@ -873,6 +873,24 @@ async function transcribeAudio(filePath) {
     log("Transkript: " + text);
     return text;
   } catch (error) {
+    if (LLM_PROVIDER === "gemini" && process.env.GROQ_API_KEY) {
+      log("Gemini transcription failed; trying Groq transcription fallback.");
+      try {
+        const payload = {
+          file: fs.createReadStream(filePath),
+          model: GROQ_TRANSCRIBE_MODEL,
+          language: STT_LANGUAGE,
+          temperature: 0,
+        };
+        const result = await groq.audio.transcriptions.create(payload);
+        const fallbackText = normalizeTranscriptText(result && result.text);
+        await safeUnlink(filePath);
+        if (fallbackText) log("Transkript (Groq fallback): " + fallbackText);
+        return fallbackText || null;
+      } catch (fallbackError) {
+        log("Groq transcription fallback failed", fallbackError);
+      }
+    }
     log("Transcription error", error);
     await safeUnlink(filePath);
     return null;
@@ -881,7 +899,15 @@ async function transcribeAudio(filePath) {
 
 async function generateChatCompletionText(messages) {
   if (LLM_PROVIDER === "vertex") return generateChatCompletionTextWithVertex(messages);
-  if (LLM_PROVIDER === "gemini") return generateChatCompletionTextWithGemini(messages);
+  if (LLM_PROVIDER === "gemini") {
+    try {
+      return await generateChatCompletionTextWithGemini(messages);
+    } catch (error) {
+      if (!process.env.GROQ_API_KEY) throw error;
+      log("Gemini chat failed; trying Groq chat fallback.");
+      return generateChatCompletionTextWithGroq(messages);
+    }
+  }
   return generateChatCompletionTextWithGroq(messages);
 }
 
