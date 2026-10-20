@@ -819,7 +819,7 @@ async function captureUtterance(session, userId) {
     }
 
     if (session.processingBusy) {
-      log(`[${session.guildId}] Skipping utterance to avoid a voice-response backlog.`);
+      log(`[${session.guildId}] Capture ignorée pour éviter une file d’attente de réponses vocales.`);
       await safeUnlink(filePath);
       return;
     }
@@ -832,7 +832,7 @@ async function captureUtterance(session, userId) {
 
         const decision = shouldIgnoreTranscript(session, userId, transcript);
         if (decision.ignore) {
-          log(`[${session.guildId}] Ignoriere Transkript (${decision.reason}): ${transcript}`);
+          log(`[${session.guildId}] Transcription ignorée (${decision.reason}) : ${transcript}`);
           return;
         }
 
@@ -889,7 +889,7 @@ async function transcribeAudio(filePath) {
     text = normalizeTranscriptText(text);
     await safeUnlink(filePath);
     if (!text) return null;
-    log("Transkript: " + text);
+    log("Transcription : " + text);
     return text;
   } catch (error) {
     log("Transcription error", error);
@@ -1046,7 +1046,7 @@ async function generateChatCompletionTextWithVertex(messages) {
   const blocked = candidate?.safetyRatings?.some((rating) => rating?.blocked === true);
 
   if (blocked) {
-    return "Ich kann darauf gerade nicht sinnvoll antworten. Formuliere es bitte anders.";
+    return "Je ne peux pas répondre correctement pour le moment. Essaie de reformuler.";
   }
 
   const text = candidate?.content?.parts
@@ -1097,7 +1097,7 @@ async function generateReply(session, userId, transcript, decision = null) {
       }
 
       const fallbackReply =
-        "Ich habe akustisch nur Bruchstuecke verstanden. Sag es bitte nochmal langsam oder kuerzer.";
+        "Je n’ai compris que quelques morceaux. Répète plus lentement ou plus brièvement, s’il te plaît.";
       const now = Date.now();
       appendConversationHistory(
         memory,
@@ -1191,7 +1191,7 @@ async function speakReply(session, text) {
     if (textChannel && textChannel.isTextBased() && shouldNotify) {
       session.memory.lastTtsErrorNotifyAt = now;
       void textChannel.send(
-        `Sprachausgabe fehlgeschlagen. Ich schreibe weiter im Chat. Ursache: ${String(
+        `La réponse vocale a échoué. Je continue à répondre dans le chat. Cause : ${String(
           error?.message || error,
         ).slice(0, 180)}`,
       );
@@ -1312,7 +1312,7 @@ async function joinForMessage(message) {
   if (existing) {
     existing.textChannelId = message.channel.id;
     if (existing.voiceChannelId === voiceChannel.id) {
-      await message.reply("Ich bin bereits in deinem Voice-Channel und hoere zu.");
+      await message.reply("Je suis déjà dans ton salon vocal et j’écoute.");
       return;
     }
     await destroySession(guildId);
@@ -1342,7 +1342,7 @@ async function joinForMessage(message) {
     sessions.set(guildId, session);
 
     await message.reply(
-      `Voice-Channel gejoint: **${voiceChannel.name}**. Ich hoere zu und antworte per Sprache.`,
+      `J’ai rejoint le salon vocal **${voiceChannel.name}**. J’écoute et je réponds à voix haute.`,
     );
   } catch (error) {
     connection.destroy();
@@ -1374,7 +1374,7 @@ async function destroySession(guildId) {
 async function handleSayCommand(message, text) {
   const session = sessions.get(message.guild.id);
   if (!session) {
-    await message.reply("Ich bin noch in keinem Voice-Channel. Nutze zuerst `!join`.");
+    await message.reply("Je ne suis dans aucun salon vocal. Utilise d’abord `!join`.");
     return;
   }
 
@@ -1522,7 +1522,7 @@ client.on("messageCreate", async (message) => {
     }
 
     if (command === "testchannels") {
-      await message.reply("Ich teste nun alle Voice-Channels auf dem Server...");
+      await message.reply("Je teste les salons vocaux du serveur...");
       const voiceChannels = message.guild.channels.cache.filter(c => c.isVoiceBased());
       let success = false;
       
@@ -1539,7 +1539,7 @@ client.on("messageCreate", async (message) => {
 
         try {
           await entersState(connection, VoiceConnectionStatus.Ready, 15_000);
-          await message.channel.send(`✅ Erfolgreich mit **${vc.name}** verbunden! (Audio funktioniert)`);
+          await message.channel.send(`✅ Connexion réussie à **${vc.name}** ! L’audio fonctionne.`);
           
           const session = createSession(message.guild.id, connection, message.channel.id, vc.id);
           sessions.set(message.guild.id, session);
@@ -1552,7 +1552,7 @@ client.on("messageCreate", async (message) => {
       }
       
       if (!success) {
-        await message.channel.send("Ich habe alle Kanaele getestet. Leider konnte zu keinem einzigen eine Audio-Verbindung aufgebaut werden.");
+        await message.channel.send("J’ai testé tous les salons, mais aucune connexion audio n’a pu être établie.");
       }
       return;
     }
@@ -1592,7 +1592,7 @@ client.on("messageCreate", async (message) => {
     }
   } catch (error) {
     log("Command error", error);
-    await message.reply("Fehler beim Ausfuehren des Befehls.");
+    await message.reply("Une erreur est survenue pendant l’exécution de la commande.");
   }
 });
 
