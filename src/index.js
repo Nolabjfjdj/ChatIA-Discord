@@ -388,18 +388,16 @@ function looksDirectedAtBot(text) {
   const lower = normalizeTranscriptText(text).toLowerCase();
   if (!lower) return false;
 
+  const normalizedText = " " + lower.replace(/[^\\p{L}\\p{N}]+/gu, " ") + " ";
   if (BOT_WAKE_WORDS.some((wakeWord) => {
-    const escaped = wakeWord.replace(/[.*+?^${}()|[\]\\]/g, "\\  if (BOT_WAKE_WORDS.some((wakeWord) => lower.includes(wakeWord))) {
-    return true;
-  }");
-    return new RegExp("(^|[^\\p{L}\\p{N}_])" + escaped + "([^\\p{L}\\p{N}_]|$)", "iu").test(lower);
+    const normalizedWakeWord = wakeWord.toLowerCase().replace(/[^\\p{L}\\p{N}]+/gu, " ").trim();
+    return normalizedText.includes(" " + normalizedWakeWord + " ");
   })) {
     return true;
   }
 
-  return /^(qui|quoi|que|qu’est-ce que|quest-ce que|comment|où|ou|quand|pourquoi|est-ce que|est ce que|tu peux|peux-tu|peux tu|tu sais|explique|explique-moi|explique moi|dis-moi|dis moi|tu pourrais|pourrais-tu|pourrais tu|wer|was|wie|wo|wann|warum|wieso|weshalb|kannst du|bitte|erklär|erklaer|sag mal)\b/i.test(lower);
+  return /^(qui|quoi|que|qu’est-ce que|quest-ce que|comment|où|ou|quand|pourquoi|est-ce que|est ce que|tu peux|peux-tu|peux tu|tu sais|explique|explique-moi|explique moi|dis-moi|dis moi|tu pourrais|pourrais-tu|pourrais tu|wer|was|wie|wo|wann|warum|wieso|weshalb|kannst du|bitte|erklär|erklaer|sag mal)\\b/i.test(lower);
 }
-
 function getChannelMemoryKey(guildId, voiceChannelId) {
   return `${guildId}:${voiceChannelId}`;
 }
