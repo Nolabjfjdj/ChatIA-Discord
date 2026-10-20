@@ -50,6 +50,10 @@ const GROQ_CHAT_MODEL = process.env.GROQ_CHAT_MODEL || "llama-3.1-8b-instant";
 const GROQ_TRANSCRIBE_MODEL =
   process.env.GROQ_TRANSCRIBE_MODEL || "whisper-large-v3-turbo";
 const LLM_PROVIDER = (process.env.LLM_PROVIDER || "groq").toLowerCase();
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY || "";
+const GEMINI_BASE_URL = process.env.GEMINI_BASE_URL || "https://generativelanguage.googleapis.com/v1beta";
+const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-2.5-flash";
+const GEMINI_TRANSCRIBE_MODEL = process.env.GEMINI_TRANSCRIBE_MODEL || GEMINI_MODEL;
 const VERTEX_API_KEY = process.env.VERTEX_API_KEY || "";
 const VERTEX_BASE_URL = process.env.VERTEX_BASE_URL || "https://aiplatform.googleapis.com";
 const VERTEX_PROJECT_ID = process.env.VERTEX_PROJECT_ID || "";
@@ -101,10 +105,13 @@ const RECORDINGS_DIR = path.join(process.cwd(), "tmp-recordings");
 const STT_LANGUAGE = normalizeSttLanguage(BOT_LANGUAGE);
 const GOOGLE_TTS_LANGUAGE = normalizeGoogleTtsLanguage(BOT_LANGUAGE);
 
-if (!process.env.GROQ_API_KEY) {
-  console.error(
-    "Fehlende Umgebungsvariable: GROQ_API_KEY (wird aktuell fuer Sprach-Transkription verwendet)",
-  );
+if (LLM_PROVIDER !== "gemini" && !process.env.GROQ_API_KEY) {
+  console.error("Fehlende Umgebungsvariable: GROQ_API_KEY (erforderlich fuer den Groq-Provider).");
+  process.exit(1);
+}
+
+if (LLM_PROVIDER === "gemini" && !GEMINI_API_KEY) {
+  console.error("LLM_PROVIDER=gemini gesetzt, aber GEMINI_API_KEY fehlt.");
   process.exit(1);
 }
 
@@ -113,13 +120,13 @@ if (LLM_PROVIDER === "vertex" && !VERTEX_API_KEY) {
   process.exit(1);
 }
 
-if (!["groq", "vertex"].includes(LLM_PROVIDER)) {
-  console.error(`Ungueltiger LLM_PROVIDER: ${LLM_PROVIDER}. Erlaubt: groq, vertex`);
+if (!["groq", "vertex", "gemini"].includes(LLM_PROVIDER)) {
+  console.error("Ungueltiger LLM_PROVIDER: " + LLM_PROVIDER + ". Erlaubt: groq, vertex, gemini");
   process.exit(1);
 }
 
 const groq = new OpenAI({
-  apiKey: process.env.GROQ_API_KEY,
+  apiKey: process.env.GROQ_API_KEY || "not-used-with-gemini",
   baseURL: GROQ_BASE_URL,
 });
 
@@ -839,25 +846,30 @@ async function safeUnlink(filePath) {
 
 async function transcribeAudio(filePath) {
   try {
-    const payload = {
-      file: fs.createReadStream(filePath),
-      model: GROQ_TRANSCRIBE_MODEL,
-      language: STT_LANGUAGE,
-      temperature: 0,
-    };
-
-    if (STT_LANGUAGE === "de") {
-      payload.prompt =
-        "Discord Voice Chat auf Deutsch. Transkribiere natuerlich auf Deutsch, keine Uebersetzung.";
+    let text;
+    if (LLM_PROVIDER === "gemini") {
+      const audio = await fsp.readFile(filePath);
+      const languageName = STT_LANGUAGE === "fr" ? "French" : STT_LANGUAGE === "de" ? "German" : STT_LANGUAGE === "es" ? "Spanish" : STT_LANGUAGE === "en" ? "English" : STT_LANGUAGE;
+      const data = await callGeminiGenerateContent(GEMINI_TRANSCRIBE_MODEL, {
+        contents: [{ parts: [
+          { text: "Transcribe this Discord voice recording in " + languageName + ". Return only the words actually spoken in the original language. Do not translate, explain, or add commentary." },
+          { inlineData: { mimeType: "audio/wav", data: audio.toString("base64") } },
+        ] }],
+        generationConfig: { temperature: 0 },
+      });
+      text = data && data.candidates && data.candidates[0] && data.candidates[0].content && data.candidates[0].content.parts
+        ? data.candidates[0].content.parts.map((part) => typeof part.text === "string" ? part.text : "").join(" ").trim()
+        : "";
+    } else {
+      const payload = { file: fs.createReadStream(filePath), model: GROQ_TRANSCRIBE_MODEL, language: STT_LANGUAGE, temperature: 0 };
+      if (STT_LANGUAGE === "de") payload.prompt = "Discord Voice Chat auf Deutsch. Transkribiere natuerlich auf Deutsch, keine Uebersetzung.";
+      const result = await groq.audio.transcriptions.create(payload);
+      text = result && result.text;
     }
-
-    const result = await groq.audio.transcriptions.create(payload);
-
-    const text = normalizeTranscriptText(result?.text);
+    text = normalizeTranscriptText(text);
     await safeUnlink(filePath);
-
     if (!text) return null;
-    log(`Transkript: ${text}`);
+    log("Transkript: " + text);
     return text;
   } catch (error) {
     log("Transcription error", error);
@@ -867,10 +879,8 @@ async function transcribeAudio(filePath) {
 }
 
 async function generateChatCompletionText(messages) {
-  if (LLM_PROVIDER === "vertex") {
-    return generateChatCompletionTextWithVertex(messages);
-  }
-
+  if (LLM_PROVIDER === "vertex") return generateChatCompletionTextWithVertex(messages);
+  if (LLM_PROVIDER === "gemini") return generateChatCompletionTextWithGemini(messages);
   return generateChatCompletionTextWithGroq(messages);
 }
 
@@ -923,6 +933,30 @@ function buildVertexGenerateContentUrl() {
   return url.toString();
 }
 
+async function callGeminiGenerateContent(modelName, body) {
+  const base = GEMINI_BASE_URL.replace(/\/+$/, "");
+  const url = new URL(base + "/models/" + encodeURIComponent(modelName) + ":generateContent");
+  url.searchParams.set("key", GEMINI_API_KEY);
+  const response = await request(url.toString(), { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+  if (response.statusCode >= 400) {
+    let details = "";
+    try { details = String(await response.body.text()); } catch {}
+    throw new Error("Gemini generateContent failed: HTTP " + response.statusCode + (details ? " - " + details : ""));
+  }
+  return response.body.json();
+}
+
+async function generateChatCompletionTextWithGemini(messages) {
+  const mapped = mapOpenAiMessagesToVertex(messages);
+  if (!mapped.contents.length) return null;
+  const body = { contents: mapped.contents, generationConfig: { temperature: 0.55, maxOutputTokens: CHAT_MAX_TOKENS } };
+  if (mapped.systemInstruction) body.systemInstruction = mapped.systemInstruction;
+  const data = await callGeminiGenerateContent(GEMINI_MODEL, body);
+  const candidate = data && data.candidates && data.candidates[0];
+  if (candidate && candidate.safetyRatings && candidate.safetyRatings.some((rating) => rating.blocked === true)) return "Je ne peux pas répondre à cette demande. Essaie de la reformuler.";
+  const text = candidate && candidate.content && candidate.content.parts ? candidate.content.parts.map((part) => typeof part.text === "string" ? part.text : "").join(" ").trim() : "";
+  return normalizeTranscriptText(text);
+}
 async function generateChatCompletionTextWithVertex(messages) {
   const { systemInstruction, contents } = mapOpenAiMessagesToVertex(messages);
 
