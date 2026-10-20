@@ -657,6 +657,7 @@ function createSession(guildId, connection, textChannelId, voiceChannelId) {
     player,
     activeCaptures: new Set(),
     processingQueue: Promise.resolve(),
+    processingBusy: false,
     botSpeaking: false,
     memory,
     destroyed: false,
@@ -694,6 +695,7 @@ function createSession(guildId, connection, textChannelId, voiceChannelId) {
   connection.receiver.speaking.on("start", (userId) => {
     if (session.destroyed) return;
     if (session.activeCaptures.has(userId)) return;
+    if (session.processingBusy) return;
     if (session.botSpeaking) return;
     if (Date.now() - session.memory.lastBotSpeechEndedAt < BOT_ECHO_GUARD_MS) return;
 
@@ -774,7 +776,7 @@ async function captureUtterance(session, userId) {
   const opusStream = session.connection.receiver.subscribe(userId, {
     end: {
       behavior: EndBehaviorType.AfterSilence,
-      duration: 1200,
+      duration: 800,
     },
   });
 
@@ -814,21 +816,32 @@ async function captureUtterance(session, userId) {
       return;
     }
 
-    await enqueueSessionWork(session, async () => {
-      const transcript = await transcribeAudio(filePath);
-      if (!transcript) return;
+    if (session.processingBusy) {
+      log(`[${session.guildId}] Skipping utterance to avoid a voice-response backlog.`);
+      await safeUnlink(filePath);
+      return;
+    }
 
-      const decision = shouldIgnoreTranscript(session, userId, transcript);
-      if (decision.ignore) {
-        log(`[${session.guildId}] Ignoriere Transkript (${decision.reason}): ${transcript}`);
-        return;
-      }
+    session.processingBusy = true;
+    try {
+      await enqueueSessionWork(session, async () => {
+        const transcript = await transcribeAudio(filePath);
+        if (!transcript) return;
 
-      const reply = await generateReply(session, userId, decision.transcript, decision);
-      if (!reply) return;
+        const decision = shouldIgnoreTranscript(session, userId, transcript);
+        if (decision.ignore) {
+          log(`[${session.guildId}] Ignoriere Transkript (${decision.reason}): ${transcript}`);
+          return;
+        }
 
-      await speakReply(session, reply);
-    });
+        const reply = await generateReply(session, userId, decision.transcript, decision);
+        if (!reply) return;
+
+        await speakReply(session, reply);
+      });
+    } finally {
+      session.processingBusy = false;
+    }
   } catch (error) {
     log(`[${session.guildId}] captureUtterance failed`, error);
     await safeUnlink(filePath);
@@ -873,24 +886,6 @@ async function transcribeAudio(filePath) {
     log("Transkript: " + text);
     return text;
   } catch (error) {
-    if (LLM_PROVIDER === "gemini" && process.env.GROQ_API_KEY) {
-      log("Gemini transcription failed; trying Groq transcription fallback.");
-      try {
-        const payload = {
-          file: fs.createReadStream(filePath),
-          model: GROQ_TRANSCRIBE_MODEL,
-          language: STT_LANGUAGE,
-          temperature: 0,
-        };
-        const result = await groq.audio.transcriptions.create(payload);
-        const fallbackText = normalizeTranscriptText(result && result.text);
-        await safeUnlink(filePath);
-        if (fallbackText) log("Transkript (Groq fallback): " + fallbackText);
-        return fallbackText || null;
-      } catch (fallbackError) {
-        log("Groq transcription fallback failed", fallbackError);
-      }
-    }
     log("Transcription error", error);
     await safeUnlink(filePath);
     return null;
@@ -899,15 +894,7 @@ async function transcribeAudio(filePath) {
 
 async function generateChatCompletionText(messages) {
   if (LLM_PROVIDER === "vertex") return generateChatCompletionTextWithVertex(messages);
-  if (LLM_PROVIDER === "gemini") {
-    try {
-      return await generateChatCompletionTextWithGemini(messages);
-    } catch (error) {
-      if (!process.env.GROQ_API_KEY) throw error;
-      log("Gemini chat failed; trying Groq chat fallback.");
-      return generateChatCompletionTextWithGroq(messages);
-    }
-  }
+  if (LLM_PROVIDER === "gemini") return generateChatCompletionTextWithGemini(messages);
   return generateChatCompletionTextWithGroq(messages);
 }
 
