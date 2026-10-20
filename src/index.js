@@ -34,6 +34,7 @@ const wav = require("wav");
 const OpenAI = require("openai");
 const googleTTS = require("google-tts-api");
 const { request } = require("undici");
+const http = require("node:http");
 
 const REQUIRED_ENV = ["DISCORD_TOKEN"];
 for (const key of REQUIRED_ENV) {
@@ -128,6 +129,14 @@ if (!["groq", "vertex", "gemini"].includes(LLM_PROVIDER)) {
 const groq = new OpenAI({
   apiKey: process.env.GROQ_API_KEY || "not-used-with-gemini",
   baseURL: GROQ_BASE_URL,
+});
+
+const port = Number.parseInt(process.env.PORT || "3000", 10);
+http.createServer((req, res) => {
+  res.writeHead(200, { "content-type": "text/plain; charset=utf-8" });
+  res.end("ChatIA Discord voice bot is running");
+}).listen(port, "0.0.0.0", () => {
+  log("Health server listening on port " + port);
 });
 
 const client = new Client({
