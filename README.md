@@ -23,8 +23,8 @@ Discord Voice AI is a self-hosted Discord bot that joins a voice channel, transc
 
 | Layer | Default | Optional |
 | --- | --- | --- |
-| Speech to text | Groq Whisper-compatible API | OpenAI-compatible endpoint |
-| LLM replies | Groq | Google Vertex AI |
+| Speech to text | Gemini audio input when `LLM_PROVIDER=gemini` | Groq Whisper-compatible API |
+| LLM replies | Gemini AI Studio when `LLM_PROVIDER=gemini` | Groq or Google Vertex AI |
 | Text to speech | Google TTS | ElevenLabs |
 
 ## Quick Start
@@ -37,14 +37,19 @@ cp .env.example .env
 npm start
 ```
 
-At minimum, configure:
+For the Gemini AI Studio setup, configure these environment variables in your hosting dashboard:
 
 ```bash
 DISCORD_TOKEN=your_discord_bot_token
-GROQ_API_KEY=your_groq_api_key
+GEMINI_API_KEY=your_gemini_api_key
+LLM_PROVIDER=gemini
+GEMINI_MODEL=gemini-2.5-flash
+GEMINI_TRANSCRIBE_MODEL=gemini-2.5-flash
+BOT_LANGUAGE=fr
+TTS_PROVIDER=google
 ```
 
-Then use `!join` in a Discord text channel while you are already connected to a voice channel.
+Gemini is used for both audio transcription and response generation in this mode. Free-tier availability and quotas depend on Google AI Studio. Then use `!join` in a Discord text channel while you are already connected to a voice channel.
 
 ## Runtime Flow
 
