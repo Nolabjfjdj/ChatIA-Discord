@@ -43,8 +43,8 @@ For the Gemini AI Studio setup, configure these environment variables in your ho
 DISCORD_TOKEN=your_discord_bot_token
 GEMINI_API_KEY=your_gemini_api_key
 LLM_PROVIDER=gemini
-GEMINI_MODEL=gemini-2.5-flash
-GEMINI_TRANSCRIBE_MODEL=gemini-2.5-flash
+GEMINI_MODEL=gemini-3.8-flash
+GEMINI_TRANSCRIBE_MODEL=gemini-3.8-flash
 BOT_LANGUAGE=fr
 TTS_PROVIDER=google
 ```
