@@ -101,7 +101,7 @@ const CHAT_MAX_TOKENS = parseEnvInt(process.env.CHAT_MAX_TOKENS, 220);
 const MAX_TTS_CHARS = parseEnvInt(process.env.MAX_TTS_CHARS, 420);
 const MEMORY_MAX_MESSAGES = parseEnvInt(process.env.MEMORY_MAX_MESSAGES, 24);
 const MEMORY_MAX_CHARS = parseEnvInt(process.env.MEMORY_MAX_CHARS, 7000);
-const BOT_WAKE_WORDS = parseCsvEnv(process.env.BOT_WAKE_WORDS, ["bot", "discord bot", "chatia", "chat ia"]);
+const BOT_WAKE_WORDS = parseCsvEnv(process.env.BOT_WAKE_WORDS, ["bot", "discord bot", "chatia", "chat ia", "tchatteia", "tchatte ia", "tchatia", "tchat ia"]);
 const IGNORE_COURTESY_ONLY = parseEnvBool(process.env.IGNORE_COURTESY_ONLY, true);
 const TTS_ERROR_NOTIFY_COOLDOWN_MS = parseEnvInt(process.env.TTS_ERROR_NOTIFY_COOLDOWN_MS, 60000);
 const MIN_PCM_BYTES = parseEnvInt(process.env.MIN_PCM_BYTES, 120_000);
@@ -693,6 +693,7 @@ function createSession(guildId, connection, textChannelId, voiceChannelId) {
   });
 
   connection.receiver.speaking.on("start", (userId) => {
+    log(`[${guildId}] Détection audio: début de parole utilisateur ${userId}`);
     if (session.destroyed) return;
     if (session.activeCaptures.has(userId)) return;
     if (session.processingBusy) return;
@@ -765,6 +766,7 @@ function enqueueSessionWork(session, work) {
 }
 
 async function captureUtterance(session, userId) {
+  log(`[${session.guildId}] Capture audio démarrée pour utilisateur ${userId}`);
   session.activeCaptures.add(userId);
 
   const filePath = path.join(
@@ -814,6 +816,7 @@ async function captureUtterance(session, userId) {
     await finished;
 
     if (pcmBytes < MIN_PCM_BYTES) {
+      log(`[${session.guildId}] Audio trop court (${pcmBytes} octets; minimum ${MIN_PCM_BYTES}), transcription ignorée.`);
       await safeUnlink(filePath);
       return;
     }
@@ -824,6 +827,7 @@ async function captureUtterance(session, userId) {
       return;
     }
 
+    log(`[${session.guildId}] Audio capturé (${pcmBytes} octets); lancement de la transcription.`);
     session.processingBusy = true;
     try {
       await enqueueSessionWork(session, async () => {
