@@ -45,7 +45,7 @@ for (const key of REQUIRED_ENV) {
 }
 
 const PREFIX = process.env.BOT_PREFIX || "!";
-const BOT_LANGUAGE = process.env.BOT_LANGUAGE || "en";
+const BOT_LANGUAGE = process.env.BOT_LANGUAGE || "fr";
 const GROQ_BASE_URL = process.env.GROQ_BASE_URL || "https://api.groq.com/openai/v1";
 const GROQ_CHAT_MODEL = process.env.GROQ_CHAT_MODEL || "llama-3.1-8b-instant";
 const GROQ_TRANSCRIBE_MODEL =
@@ -93,6 +93,9 @@ const DUPLICATE_TRANSCRIPT_WINDOW_MS = parseEnvInt(
   20000,
 );
 const MIN_TRANSCRIPT_CHARS = parseEnvInt(process.env.MIN_TRANSCRIPT_CHARS, 3);
+const REPLY_ONLY_WHEN_ADDRESSED = parseEnvBool(process.env.REPLY_ONLY_WHEN_ADDRESSED, true);
+const MIN_UNADDRESSED_WORDS = parseEnvInt(process.env.MIN_UNADDRESSED_WORDS, 5);
+const GEMINI_REQUEST_TIMEOUT_MS = parseEnvInt(process.env.GEMINI_REQUEST_TIMEOUT_MS, 12000);
 const MIN_TRANSCRIPT_WORDS = parseEnvInt(process.env.MIN_TRANSCRIPT_WORDS, 2);
 const CHAT_MAX_TOKENS = parseEnvInt(process.env.CHAT_MAX_TOKENS, 220);
 const MAX_TTS_CHARS = parseEnvInt(process.env.MAX_TTS_CHARS, 420);
@@ -484,6 +487,8 @@ function shouldIgnoreTranscript(session, userId, transcript) {
 
   const canonical = canonicalizeTranscript(clean);
   const directedAtBot = looksDirectedAtBot(clean);
+  if (REPLY_ONLY_WHEN_ADDRESSED && !directedAtBot) return { ignore: true, reason: "not-addressed-to-bot" };
+  if (!directedAtBot && countWords(clean) < MIN_UNADDRESSED_WORDS) return { ignore: true, reason: "short-conversation" };
   const lastSame = memory.recentTranscriptByUser.get(userId);
 
   if (
