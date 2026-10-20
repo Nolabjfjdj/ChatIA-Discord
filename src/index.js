@@ -1434,74 +1434,8 @@ client.once("ready", async () => {
       log(`[System] Health-check server listening on port ${PORT} (Cloud Run compatibility)`);
   });
 
-  // INTELLIGENT AUTO-TEST (Channel Hunting) - Added per User Request
-  setTimeout(async () => {
-    if (!AUTO_JOIN_VOICE_CHANNELS) return;
+  // La connexion vocale est gérée par le mécanisme Auto-Join ci-dessus.
 
-    for (const guild of client.guilds.cache.values()) {
-      if (sessions.has(guild.id)) {
-        log(`[${guild.id}] CHANNEL-HUNT: Session vocale déjà active; recherche ignorée pour éviter une double écoute.`);
-        continue;
-      }
-      log(`[${guild.id}] CHANNEL-HUNT: Starte Suche nach stabilem Voice-Kanal...`);
-      
-      const allChannels = [...guild.channels.cache.filter(c => c.isVoiceBased()).values()];
-      
-      // Prioritize ARAM and LoL channels mentioned by user
-      const priorityNames = ["ARAM", "LoL", "Kluft", "Minecraft", "Palworld", "Pokemon"];
-      const sortedChannels = allChannels.sort((a, b) => {
-        const aScore = priorityNames.some(p => a.name.toLowerCase().includes(p.toLowerCase())) ? 0 : 1;
-        const bScore = priorityNames.some(p => b.name.toLowerCase().includes(p.toLowerCase())) ? 0 : 1;
-        return aScore - bScore;
-      });
-
-      let success = false;
-      for (const vc of sortedChannels) {
-        log(`[${guild.id}] CHANNEL-HUNT: Probiere "${vc.name}"...`);
-        
-        const connection = joinVoiceChannel({
-          channelId: vc.id,
-          guildId: guild.id,
-          adapterCreator: guild.voiceAdapterCreator,
-          selfDeaf: false,
-          selfMute: false,
-        });
-
-        try {
-          // Wait for connection to be ready with a generous timeout
-          await entersState(connection, VoiceConnectionStatus.Ready, 30_000);
-          
-          log(`[${guild.id}] CHANNEL-HUNT: 🟢 Handshake okay in "${vc.name}". Starte Stabilitätstest (30s)...`);
-          
-          // Wait to see if it stays connected (detect "1-minute drop" issues early)
-          await new Promise((resolve, reject) => {
-            const timeout = setTimeout(resolve, 30_000);
-            connection.on('stateChange', (oldS, newS) => {
-                if (newS.status === VoiceConnectionStatus.Disconnected || newS.status === VoiceConnectionStatus.Destroyed) {
-                    clearTimeout(timeout);
-                    reject(new Error("Verbindung waehrend Test verloren."));
-                }
-            });
-          });
-
-          log(`[${guild.id}] CHANNEL-HUNT: ✅ "${vc.name}" ist STABIL!`);
-          const session = createSession(guild.id, connection, null, vc.id);
-          sessions.set(guild.id, session);
-          success = true;
-          break;
-        } catch (error) {
-          try { connection.destroy(); } catch {}
-          log(`[${guild.id}] CHANNEL-HUNT: ❌ "${vc.name}" fehlgeschlagen: ${error.message || "Timeout"}. Nächster...`);
-          // Wait a bit before next attempt to avoid slamming Discord
-          await new Promise(r => setTimeout(r, 2000));
-        }
-      }
-      
-      if (!success) {
-        log(`[${guild.id}] CHANNEL-HUNT: ⚠️ Kein einziger Kanal konnte eine stabile Verbindung aufbauen. Netzwerk-Problem vermutet.`);
-      }
-    }
-  }, 3000);
 });
 
 client.on("voiceStateUpdate", (oldState, newState) => {
