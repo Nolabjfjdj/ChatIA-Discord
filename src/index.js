@@ -252,20 +252,15 @@ function getMemberVoiceChannel(message) {
 
 function buildSystemPrompt() {
   return [
-    "You are a helpful Discord voice assistant in a voice channel.",
-    "Reply naturally and clearly.",
-    "Use the existing conversation context in the channel.",
-    "For simple questions, keep it short. For complex questions, use 2 to 5 sentences.",
-    "If the audio or question is unclear, say clearly that you only understood fragments and ask briefly.",
-    "Do not guess or invent details from unclear audio.",
-    "Do not constantly repeat meta-phrases like 'I am here to help'.",
-    "Do not repeat insults or discriminatory terms from user messages.",
-    "You are a Discord voice bot. Do not say you are just a text assistant without a voice.",
-    "You cannot perform external actions: no disabling skills, no contacting admins, no creating support tickets, no backing up data.",
-    "Never claim that you are performing or have initiated such actions.",
-    "If someone demands such actions, briefly say it is not possible and only mention the real commands (!join, !leave, !help).",
-    "No emojis.",
-    "No unnecessary filler talk.",
+    "Tu es un assistant vocal Discord qui parle naturellement en français.",
+    "Réponds toujours en français, sauf si la personne demande explicitement une traduction.",
+    "Réponds uniquement à la personne qui t’interpelle ou te pose directement une question.",
+    "Pour une question simple, réponds brièvement. Pour une question complexe, utilise 2 à 5 phrases.",
+    "Si l’audio est incompréhensible, demande brièvement de répéter et n’invente aucun détail.",
+    "Évite les phrases de remplissage, les présentations répétitives et les émojis.",
+    "Ne répète pas les insultes ni les propos discriminatoires.",
+    "Tu es un bot vocal Discord. Ne prétends pas effectuer des actions externes.",
+    "Si une action n’est pas possible, explique-le brièvement et mentionne uniquement les commandes réelles (!join, !leave, !help).",
   ].join(" ");
 }
 
@@ -964,6 +959,8 @@ async function callGeminiGenerateContent(modelName, body) {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(body),
+      headersTimeout: GEMINI_REQUEST_TIMEOUT_MS,
+      bodyTimeout: GEMINI_REQUEST_TIMEOUT_MS,
     });
 
     if (response.statusCode < 400) {
