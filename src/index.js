@@ -1432,6 +1432,8 @@ client.once("ready", async () => {
 
   // INTELLIGENT AUTO-TEST (Channel Hunting) - Added per User Request
   setTimeout(async () => {
+    if (!AUTO_JOIN_VOICE_CHANNELS) return;
+
     for (const guild of client.guilds.cache.values()) {
       log(`[${guild.id}] CHANNEL-HUNT: Starte Suche nach stabilem Voice-Kanal...`);
       
