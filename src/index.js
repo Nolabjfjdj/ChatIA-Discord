@@ -51,7 +51,7 @@ const GROQ_CHAT_MODEL = process.env.GROQ_CHAT_MODEL || "llama-3.1-8b-instant";
 const GROQ_TRANSCRIBE_MODEL =
   process.env.GROQ_TRANSCRIBE_MODEL || "whisper-large-v3-turbo";
 const LLM_PROVIDER = (process.env.LLM_PROVIDER || "groq").toLowerCase();
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY || "";
+const GEMINI_API_KEYS = [...new Set([process.env.GEMINI_API_KEY, ...(process.env.GEMINI_API_KEYS || "").split(",")].map((key) => String(key || "").trim()).filter(Boolean))];
 const GEMINI_BASE_URL = process.env.GEMINI_BASE_URL || "https://generativelanguage.googleapis.com/v1beta";
 const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-3.8-flash";
 const GEMINI_TRANSCRIBE_MODEL = process.env.GEMINI_TRANSCRIBE_MODEL || GEMINI_MODEL;
@@ -111,8 +111,8 @@ if (LLM_PROVIDER !== "gemini" && !process.env.GROQ_API_KEY) {
   process.exit(1);
 }
 
-if (LLM_PROVIDER === "gemini" && !GEMINI_API_KEY) {
-  console.error("LLM_PROVIDER=gemini gesetzt, aber GEMINI_API_KEY fehlt.");
+if (LLM_PROVIDER === "gemini" && GEMINI_API_KEYS.length === 0) {
+  console.error("LLM_PROVIDER=gemini gesetzt, aber GEMINI_API_KEY oder GEMINI_API_KEYS fehlt.");
   process.exit(1);
 }
 
@@ -935,16 +935,38 @@ function buildVertexGenerateContentUrl() {
 }
 
 async function callGeminiGenerateContent(modelName, body) {
-  const base = GEMINI_BASE_URL.replace(/\/+$/, "");
-  const url = new URL(base + "/models/" + encodeURIComponent(modelName) + ":generateContent");
-  url.searchParams.set("key", GEMINI_API_KEY);
-  const response = await request(url.toString(), { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
-  if (response.statusCode >= 400) {
+  const base = GEMINI_BASE_URL.replace(/\\/+$/, "");
+  let lastError = null;
+
+  for (let index = 0; index < GEMINI_API_KEYS.length; index += 1) {
+    const url = new URL(base + "/models/" + encodeURIComponent(modelName) + ":generateContent");
+    url.searchParams.set("key", GEMINI_API_KEYS[index]);
+
+    const response = await request(url.toString(), {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+
+    if (response.statusCode < 400) {
+      return response.body.json();
+    }
+
     let details = "";
-    try { details = String(await response.body.text()); } catch {}
-    throw new Error("Gemini generateContent failed: HTTP " + response.statusCode + (details ? " - " + details : ""));
+    try {
+      details = String(await response.body.text());
+    } catch {}
+
+    lastError = new Error("Gemini generateContent failed: HTTP " + response.statusCode + (details ? " - " + details : ""));
+
+    if (![401, 403, 429, 500, 502, 503, 504].includes(response.statusCode)) {
+      throw lastError;
+    }
+
+    log("Gemini key " + (index + 1) + "/" + GEMINI_API_KEYS.length + " failed with HTTP " + response.statusCode + "; trying the next configured key.");
   }
-  return response.body.json();
+
+  throw lastError || new Error("Aucune clé Gemini disponible.");
 }
 
 async function generateChatCompletionTextWithGemini(messages) {
