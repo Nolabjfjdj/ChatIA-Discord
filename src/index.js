@@ -131,14 +131,6 @@ const groq = new OpenAI({
   baseURL: GROQ_BASE_URL,
 });
 
-const port = Number.parseInt(process.env.PORT || "3000", 10);
-http.createServer((req, res) => {
-  res.writeHead(200, { "content-type": "text/plain; charset=utf-8" });
-  res.end("ChatIA Discord voice bot is running");
-}).listen(port, "0.0.0.0", () => {
-  log("Health server listening on port " + port);
-});
-
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
