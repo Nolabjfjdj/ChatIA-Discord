@@ -104,7 +104,7 @@ const MEMORY_MAX_CHARS = parseEnvInt(process.env.MEMORY_MAX_CHARS, 7000);
 const BOT_WAKE_WORDS = parseCsvEnv(process.env.BOT_WAKE_WORDS, ["bot", "discord bot"]);
 const IGNORE_COURTESY_ONLY = parseEnvBool(process.env.IGNORE_COURTESY_ONLY, true);
 const TTS_ERROR_NOTIFY_COOLDOWN_MS = parseEnvInt(process.env.TTS_ERROR_NOTIFY_COOLDOWN_MS, 60000);
-const MIN_PCM_BYTES = 48_000; // ~0.25s bei 48kHz stereo 16-bit
+const MIN_PCM_BYTES = parseEnvInt(process.env.MIN_PCM_BYTES, 120_000);
 const RECORDINGS_DIR = path.join(process.cwd(), "tmp-recordings");
 const STT_LANGUAGE = normalizeSttLanguage(BOT_LANGUAGE);
 const GOOGLE_TTS_LANGUAGE = normalizeGoogleTtsLanguage(BOT_LANGUAGE);
@@ -366,19 +366,19 @@ function buildHardCapabilityReply(transcript) {
       lower,
     )
   ) {
-    return "Das kann ich nicht. Ich kann keinen Skill deaktivieren oder Systeme aendern. Nutze nur meine Discord-Befehle wie !join, !leave oder !help.";
+    return "Je ne peux pas désactiver de fonction ni modifier des systèmes. Utilise les commandes disponibles : !join, !leave ou !help.";
   }
 
   if (/(aus dem .*channel.*raus|aus dem channel .*raus|verpiss|verlasse .*channel)/.test(lower)) {
-    return "Ich kann den Voice-Channel nur ueber einen echten Discord-Befehl verlassen: !leave.";
+    return "Je peux quitter le salon vocal uniquement avec la commande !leave.";
   }
 
   if (/(wieder reinkommen|raus .* wieder rein|rejoin|neu joinen)/.test(lower)) {
-    return "Direktes Rejoinen geht nur ueber Discord-Befehle: !leave und danach !join.";
+    return "Pour rejoindre à nouveau le salon, utilise !leave puis !join.";
   }
 
   if (/(kannst du .*stimme|warum .*stimme .*komisch|deine stimme)/.test(lower)) {
-    return "Wenn meine Stimme komisch ist oder fehlt, ist gerade die Sprachausgabe gestört. Ich antworte dann nur im Chat.";
+    return "Si ma voix est étrange ou absente, la synthèse vocale rencontre un problème. Je peux alors répondre uniquement dans le chat.";
   }
 
   return null;
@@ -1577,12 +1577,12 @@ client.on("messageCreate", async (message) => {
     if (command === "help") {
       await message.reply(
         [
-          `**Befehle (${PREFIX})**`,
-          `${PREFIX}join - Voice-Channel joinen und zuhoeren`,
-          `${PREFIX}leave - Voice-Channel verlassen`,
-          `${PREFIX}say <text> - Test-Sprachausgabe`,
-          `Auto-Join: ${AUTO_JOIN_VOICE_CHANNELS ? "aktiv" : "deaktiviert"} (joint Voice-Channels mit Nutzern automatisch)`,
-          `${PREFIX}help - Hilfe`,
+          `**Commandes (${PREFIX})**`,
+          `${PREFIX}join - Rejoindre le salon vocal et écouter`,
+          `${PREFIX}leave - Quitter le salon vocal`,
+          `${PREFIX}say <texte> - Tester la réponse vocale`,
+          `Rejoindre automatiquement : ${AUTO_JOIN_VOICE_CHANNELS ? "activé" : "désactivé"}`,
+          `${PREFIX}help - Afficher l’aide`,
         ].join("\n"),
       );
       return;
