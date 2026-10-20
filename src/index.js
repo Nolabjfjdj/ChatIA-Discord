@@ -1439,6 +1439,10 @@ client.once("ready", async () => {
     if (!AUTO_JOIN_VOICE_CHANNELS) return;
 
     for (const guild of client.guilds.cache.values()) {
+      if (sessions.has(guild.id)) {
+        log(`[${guild.id}] CHANNEL-HUNT: Session vocale déjà active; recherche ignorée pour éviter une double écoute.`);
+        continue;
+      }
       log(`[${guild.id}] CHANNEL-HUNT: Starte Suche nach stabilem Voice-Kanal...`);
       
       const allChannels = [...guild.channels.cache.filter(c => c.isVoiceBased()).values()];
