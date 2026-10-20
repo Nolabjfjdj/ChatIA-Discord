@@ -1302,7 +1302,7 @@ async function synthesizeWithElevenLabs(text) {
 async function joinForMessage(message) {
   const voiceChannel = getMemberVoiceChannel(message);
   if (!voiceChannel) {
-    await message.reply("Du musst in einem Voice-Channel sein.");
+    await message.reply("Tu dois être dans un salon vocal.");
     return;
   }
 
@@ -1347,7 +1347,7 @@ async function joinForMessage(message) {
   } catch (error) {
     connection.destroy();
     log(`[${guildId}] Failed to join voice`, error);
-    await message.reply("Konnte dem Voice-Channel nicht beitreten.");
+    await message.reply("Impossible de rejoindre le salon vocal.");
   }
 }
 
@@ -1378,11 +1378,11 @@ async function handleSayCommand(message, text) {
     return;
   }
 
-  const clipped = clipForTts(text || "Hallo.");
+  const clipped = clipForTts(text || "Bonjour.");
   await enqueueSessionWork(session, async () => {
     await speakReply(session, clipped);
   });
-  await message.reply(`Spreche: "${clipped}"`);
+  await message.reply(`Je prononce : "${clipped}"`);
 }
 
 client.once("ready", async () => {
@@ -1527,7 +1527,7 @@ client.on("messageCreate", async (message) => {
       let success = false;
       
       for (const [id, vc] of voiceChannels) {
-        await message.channel.send(`Test verbinde zu **${vc.name}**...`);
+        await message.channel.send(`Test de connexion à **${vc.name}**...`);
         const connection = joinVoiceChannel({
           channelId: vc.id,
           guildId: message.guild.id,
@@ -1547,7 +1547,7 @@ client.on("messageCreate", async (message) => {
           break; // Stop testing if we found a working channel
         } catch (error) {
           connection.destroy();
-          await message.channel.send(`❌ Verbindung zu **${vc.name}** fehlgeschlagen nach 15s (UDP Timeout).`);
+          await message.channel.send(`❌ Échec de connexion à **${vc.name}** après 15 secondes (délai UDP dépassé).`);
         }
       }
       
@@ -1564,10 +1564,10 @@ client.on("messageCreate", async (message) => {
       await destroySession(message.guild.id);
       await message.reply(
         AUTO_JOIN_VOICE_CHANNELS
-          ? `Voice-Channel verlassen. Auto-Join pausiert fuer ${Math.round(
+          ? `Salon vocal quitté. Reconnexion automatique suspendue pendant ${Math.round(
               AUTO_JOIN_MANUAL_LEAVE_COOLDOWN_MS / 1000,
-            )}s.`
-          : "Voice-Channel verlassen.",
+            )} s.`
+          : "Salon vocal quitté.",
       );
       return;
     }
