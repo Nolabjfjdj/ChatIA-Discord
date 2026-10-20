@@ -935,7 +935,7 @@ function buildVertexGenerateContentUrl() {
 }
 
 async function callGeminiGenerateContent(modelName, body) {
-  const base = GEMINI_BASE_URL.replace(/\\/+$/, "");
+  const base = GEMINI_BASE_URL.replace(/\/+$/, "");
   let lastError = null;
 
   for (let index = 0; index < GEMINI_API_KEYS.length; index += 1) {
