@@ -1600,4 +1600,27 @@ process.on("SIGINT", async () => {
   process.exit(0);
 });
 
-client.login(process.env.DISCORD_TOKEN);
+let discordLoginAttempt = 0;
+let discordLoginRetryTimer = null;
+
+async function loginToDiscord() {
+  if (discordLoginRetryTimer) {
+    clearTimeout(discordLoginRetryTimer);
+    discordLoginRetryTimer = null;
+  }
+
+  discordLoginAttempt += 1;
+  try {
+    await client.login(process.env.DISCORD_TOKEN);
+    discordLoginAttempt = 0;
+  } catch (error) {
+    const delay = Math.min(60_000, 5_000 * 2 ** Math.min(discordLoginAttempt - 1, 4));
+    log(`Discord login failed (attempt ${discordLoginAttempt}); retrying in ${Math.round(delay / 1000)}s.`, error);
+    discordLoginRetryTimer = setTimeout(() => {
+      void loginToDiscord();
+    }, delay);
+    discordLoginRetryTimer.unref?.();
+  }
+}
+
+void loginToDiscord();
