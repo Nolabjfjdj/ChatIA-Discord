@@ -45,7 +45,7 @@ for (const key of REQUIRED_ENV) {
 }
 
 const PREFIX = process.env.BOT_PREFIX || "!";
-const BOT_LANGUAGE = process.env.BOT_LANGUAGE || "fr";
+const BOT_LANGUAGE = "fr";
 const GROQ_BASE_URL = process.env.GROQ_BASE_URL || "https://api.groq.com/openai/v1";
 const GROQ_CHAT_MODEL = process.env.GROQ_CHAT_MODEL || "llama-3.1-8b-instant";
 const GROQ_TRANSCRIBE_MODEL =
