@@ -310,13 +310,9 @@ async function buildSafeGuildContext(guild, member, preferredChannel = null) {
   const visibleChannels = [];
   const readableTextChannels = [];
   const sensitiveCategoryIds = new Set();
-
   for (const channel of guild.channels.cache.values()) {
-    if (channel.type === ChannelType.GuildCategory && isSensitiveChannelName(channel.name)) {
-      sensitiveCategoryIds.add(channel.id);
-    }
+    if (channel.type === ChannelType.GuildCategory && isSensitiveChannelName(channel.name)) sensitiveCategoryIds.add(channel.id);
   }
-
   for (const channel of guild.channels.cache.values()) {
     if (channel.type === ChannelType.GuildCategory) continue;
     if (channel.parentId && sensitiveCategoryIds.has(channel.parentId)) continue;
@@ -330,46 +326,27 @@ async function buildSafeGuildContext(guild, member, preferredChannel = null) {
     else if (channel.type === ChannelType.GuildStageVoice) visibleChannels.push("scène: " + channel.name);
     else if (channel.type === ChannelType.GuildForum) visibleChannels.push("forum: " + channel.name);
   }
-
-  const roles = [...guild.roles.cache.values()]
-    .filter((role) => role.id !== guild.id && !isSensitiveChannelName(role.name))
-    .map((role) => role.name)
-    .slice(0, 40);
-  const cachedMembers = [...guild.members.cache.values()]
-    .filter((entry) => !entry.user?.bot)
-    .map((entry) => entry.displayName || entry.user?.username)
-    .filter(Boolean)
-    .slice(0, 30);
-
+  const roles = [...guild.roles.cache.values()].filter((role) => role.id !== guild.id && !isSensitiveChannelName(role.name)).map((role) => role.name).slice(0, 40);
+  const cachedMembers = [...guild.members.cache.values()].filter((entry) => !entry.user?.bot).map((entry) => entry.displayName || entry.user?.username).filter(Boolean).slice(0, 30);
   const preferred = preferredChannel && readableTextChannels.find((channel) => channel.id === preferredChannel.id);
-  const messageChannels = [
-    ...(preferred ? [preferred] : []),
-    ...readableTextChannels.filter((channel) => channel.id !== preferred?.id),
-  ].slice(0, 3);
+  const messageChannels = [...(preferred ? [preferred] : []), ...readableTextChannels.filter((channel) => channel.id !== preferred?.id)].slice(0, 3);
   const recentMessages = [];
   for (const channel of messageChannels) {
     try {
       const fetched = await channel.messages.fetch({ limit: 4 });
-      const lines = [...fetched.values()]
-        .filter((message) => !message.author.bot && message.content?.trim())
-        .sort((a, b) => a.createdTimestamp - b.createdTimestamp)
-        .map((message) => "[" + channel.name + "] " + (message.member?.displayName || message.author.username) + " : " + normalizeTranscriptText(message.content).slice(0, 220));
-      recentMessages.push(...lines);
-    } catch {
-    }
+      recentMessages.push(...[...fetched.values()].filter((message) => !message.author.bot && message.content?.trim()).sort((a, b) => a.createdTimestamp - b.createdTimestamp).map((message) => "[" + channel.name + "] " + (message.member?.displayName || message.author.username) + " : " + normalizeTranscriptText(message.content).slice(0, 220)));
+    } catch {}
     if (recentMessages.length >= 8) break;
   }
-
-  const lines = [
+  return [
     "Nom du serveur : " + guild.name,
     guild.description ? "Description : " + guild.description : "",
     "Nombre de membres : " + guild.memberCount,
     "Salons visibles par ce membre : " + (visibleChannels.slice(0, 80).join(", ") || "aucun salon autorisé disponible"),
     "Rôles non sensibles : " + (roles.join(", ") || "aucun"),
     "Membres non-bots actuellement en cache (liste partielle, maximum 30) : " + (cachedMembers.join(", ") || "aucun membre en cache"),
-    "Messages récents de salons lisibles et non sensibles (extraits partiels) : " + (recentMessages.slice(0, 8).join("\n") || "aucun message récent disponible"),
-  ].filter(Boolean);
-  return lines.join("\n").slice(0, 6500);
+    "Messages récents de salons lisibles et non sensibles : " + (recentMessages.slice(0, 8).join("\n") || "aucun message récent disponible"),
+  ].filter(Boolean).join("\n").slice(0, 6500);
 }
 
 function normalizeTranscriptText(text) {
@@ -1976,3 +1953,101 @@ client.on("messageCreate", async (message) => {
           await message.channel.send(`❌ Échec de connexion à **${vc.name}** après 15 secondes (délai UDP dépassé).`);
         }
       }
+      
+      if (!success) {
+        await message.channel.send("J’ai testé tous les salons, mais aucune connexion audio n’a pu être établie.");
+      }
+      return;
+    }
+
+    if (command === "leave") {
+      if (isAutoJoinEnabled(message.guild.id)) {
+        setAutoJoinCooldown(message.guild.id, AUTO_JOIN_MANUAL_LEAVE_COOLDOWN_MS);
+      }
+      await destroySession(message.guild.id);
+      await message.reply(
+        isAutoJoinEnabled(message.guild.id)
+          ? `Salon vocal quitté. Reconnexion automatique suspendue pendant ${Math.round(
+              AUTO_JOIN_MANUAL_LEAVE_COOLDOWN_MS / 1000,
+            )} s.`
+          : "Salon vocal quitté.",
+      );
+      return;
+    }
+
+    if (command === "chat") {
+      await handleTextChatCommand({
+        guild: message.guild,
+        channel: message.channel,
+        author: message.author,
+        text: argText,
+        respond: content => message.reply(content),
+      });
+      return;
+    }
+
+    if (command === "say") {
+      await handleSayCommand(message, argText);
+      return;
+    }
+
+    if (command === "help") {
+      await message.reply(
+        [
+          `**Commandes (${PREFIX})**`,
+          `${PREFIX}join - Rejoindre le salon vocal et écouter`,
+          `${PREFIX}leave - Quitter le salon vocal`,
+          `${PREFIX}say <texte> - Tester la réponse vocale`,
+          `${PREFIX}chat <message> - Discuter par écrit, avec réponse vocale si je suis connecté en vocal`,
+          `${PREFIX}logs on/off - Activer ou masquer les dialogues en texte`,
+          `${PREFIX}logs salon #salon - Choisir le salon de logs`,
+          `${PREFIX}autoreconnect on/off - Activer ou désactiver la reconnexion automatique`,
+          `Rejoindre automatiquement : ${isAutoJoinEnabled(message.guild.id) ? "activé" : "désactivé"}`,
+          `${PREFIX}help - Afficher l’aide`,
+          "Commandes slash : /join, /leave, /say, /chat, /logs, /autoreconnect, /help",
+        ].join("\n"),
+      );
+      return;
+    }
+  } catch (error) {
+    log("Command error", error);
+    await message.reply("Une erreur est survenue pendant l’exécution de la commande.");
+  }
+});
+
+client.on("error", (error) => {
+  log("Discord client error", error);
+});
+
+process.on("SIGINT", async () => {
+  for (const guildId of [...sessions.keys()]) {
+    await destroySession(guildId);
+  }
+  client.destroy();
+  process.exit(0);
+});
+
+let discordLoginAttempt = 0;
+let discordLoginRetryTimer = null;
+
+async function loginToDiscord() {
+  if (discordLoginRetryTimer) {
+    clearTimeout(discordLoginRetryTimer);
+    discordLoginRetryTimer = null;
+  }
+
+  discordLoginAttempt += 1;
+  try {
+    await client.login(process.env.DISCORD_TOKEN);
+    discordLoginAttempt = 0;
+  } catch (error) {
+    const delay = Math.min(60_000, 5_000 * 2 ** Math.min(discordLoginAttempt - 1, 4));
+    log(`Discord login failed (attempt ${discordLoginAttempt}); retrying in ${Math.round(delay / 1000)}s.`, error);
+    discordLoginRetryTimer = setTimeout(() => {
+      void loginToDiscord();
+    }, delay);
+    discordLoginRetryTimer.unref?.();
+  }
+}
+
+void loginToDiscord();
