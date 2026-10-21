@@ -1432,7 +1432,8 @@ async function generateReply(session, userId, transcript, decision = null) {
       return fallbackReply;
     }
 
-    const voiceChannel = client.channels.cache.get(session.voiceChannelId);\n    const serverContext = await buildSafeGuildContext(guild, member, session?.textChannelId ? guild.channels.cache.get(session.textChannelId) : null, transcript, voiceChannel);
+    const voiceChannel = client.channels.cache.get(session.voiceChannelId);
+    const serverContext = await buildSafeGuildContext(guild, member, session?.textChannelId ? guild.channels.cache.get(session.textChannelId) : null, transcript, voiceChannel);
     const userMessage = `${username} sagt im Sprachchat: ${transcript}`;
     const messages = [
       { role: "system", content: buildSystemPrompt(serverContext) },
