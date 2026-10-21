@@ -520,6 +520,8 @@ function hasExplicitBotWakeWord(text) {
     ...BOT_WAKE_WORDS,
     "chatia",
     "chat ia",
+    "chaia",
+    "cha ia",
     "tchatia",
     "tchat ia",
     "tchattia",
