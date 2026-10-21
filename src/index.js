@@ -1068,6 +1068,7 @@ function buildVertexGenerateContentUrl() {
 
 const GEMINI_MODEL_COOLDOWN_MS = parseEnvInt(process.env.GEMINI_MODEL_COOLDOWN_MS, 60000);
 const geminiModelCooldowns = new Map();
+const geminiKeyCooldowns = new Map();
 
 async function callGeminiGenerateContent(modelName, body) {
   const base = GEMINI_BASE_URL.replace(/\/+$/, "");
@@ -1080,9 +1081,10 @@ async function callGeminiGenerateContent(modelName, body) {
 
   for (let modelIndex = 0; modelIndex < models.length; modelIndex += 1) {
     const currentModel = models[modelIndex];
+    const now = Date.now();
     const cooldownUntil = geminiModelCooldowns.get(currentModel) || 0;
-    if (cooldownUntil > Date.now()) {
-      log("Gemini model " + currentModel + " is rate-limited; skipping it for " + Math.ceil((cooldownUntil - Date.now()) / 1000) + "s and trying the next model.");
+    if (cooldownUntil > now) {
+      log("Gemini model " + currentModel + " is rate-limited; skipping it for " + Math.ceil((cooldownUntil - now) / 1000) + "s and trying the next model.");
       lastError = new Error("Gemini model " + currentModel + " is in rate-limit cooldown.");
       continue;
     }
@@ -1090,8 +1092,18 @@ async function callGeminiGenerateContent(modelName, body) {
 
     let switchModel = false;
     let rateLimitedKeys = 0;
+    let availableKeys = 0;
 
     for (let keyIndex = 0; keyIndex < GEMINI_API_KEYS.length; keyIndex += 1) {
+      const keyCooldownId = currentModel + ":" + keyIndex;
+      const keyCooldownUntil = geminiKeyCooldowns.get(keyCooldownId) || 0;
+      if (keyCooldownUntil > Date.now()) {
+        log("Gemini model " + currentModel + ", key " + (keyIndex + 1) + "/" + GEMINI_API_KEYS.length + " is in rate-limit cooldown; skipping it.");
+        continue;
+      }
+      if (keyCooldownUntil) geminiKeyCooldowns.delete(keyCooldownId);
+      availableKeys += 1;
+
       const url = new URL(base + "/models/" + encodeURIComponent(currentModel) + ":generateContent");
       url.searchParams.set("key", GEMINI_API_KEYS[keyIndex]);
 
@@ -1112,6 +1124,7 @@ async function callGeminiGenerateContent(modelName, body) {
 
       if (response.statusCode < 400) {
         geminiModelCooldowns.delete(currentModel);
+        geminiKeyCooldowns.delete(keyCooldownId);
         if (currentModel !== modelName) {
           log("Gemini fallback model succeeded: " + currentModel + ".");
         }
@@ -1125,7 +1138,10 @@ async function callGeminiGenerateContent(modelName, body) {
 
       lastError = new Error("Gemini generateContent failed: model " + currentModel + ", HTTP " + response.statusCode + (details ? " - " + details : ""));
 
-      if (response.statusCode === 429) rateLimitedKeys += 1;
+      if (response.statusCode === 429) {
+        rateLimitedKeys += 1;
+        geminiKeyCooldowns.set(keyCooldownId, Date.now() + GEMINI_MODEL_COOLDOWN_MS);
+      }
 
       if (response.statusCode === 503 || response.statusCode === 502 || response.statusCode === 504) {
         log("Gemini model " + currentModel + " returned HTTP " + response.statusCode + "; switching to the next fallback model.");
@@ -1140,9 +1156,13 @@ async function callGeminiGenerateContent(modelName, body) {
       log("Gemini model " + currentModel + ", key " + (keyIndex + 1) + "/" + GEMINI_API_KEYS.length + " failed with HTTP " + response.statusCode + "; trying the next configured key.");
     }
 
-    if (!switchModel && GEMINI_API_KEYS.length > 0 && rateLimitedKeys === GEMINI_API_KEYS.length) {
+    if (availableKeys === 0) {
+      lastError = new Error("All API keys for Gemini model " + currentModel + " are in rate-limit cooldown.");
+    }
+
+    if (!switchModel && availableKeys > 0 && rateLimitedKeys === availableKeys) {
       geminiModelCooldowns.set(currentModel, Date.now() + GEMINI_MODEL_COOLDOWN_MS);
-      log("All configured keys returned HTTP 429 for Gemini model " + currentModel + "; skipping it for " + Math.ceil(GEMINI_MODEL_COOLDOWN_MS / 1000) + "s before retrying it.");
+      log("All available keys returned HTTP 429 for Gemini model " + currentModel + "; skipping it for " + Math.ceil(GEMINI_MODEL_COOLDOWN_MS / 1000) + "s before retrying it.");
     }
 
     if (modelIndex < models.length - 1) {
