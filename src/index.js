@@ -958,20 +958,27 @@ function buildVertexGenerateContentUrl() {
 }
 
 async function callGeminiGenerateContent(modelName, body) {
-  const base = GEMINI_BASE_URL.replace(/\/+$/, "");
+  const base = GEMINI_BASE_URL.replace(/\\/+$/, "");
   let lastError = null;
 
   for (let index = 0; index < GEMINI_API_KEYS.length; index += 1) {
     const url = new URL(base + "/models/" + encodeURIComponent(modelName) + ":generateContent");
     url.searchParams.set("key", GEMINI_API_KEYS[index]);
 
-    const response = await request(url.toString(), {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(body),
-      headersTimeout: GEMINI_REQUEST_TIMEOUT_MS,
-      bodyTimeout: GEMINI_REQUEST_TIMEOUT_MS,
-    });
+    let response;
+    try {
+      response = await request(url.toString(), {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+        headersTimeout: GEMINI_REQUEST_TIMEOUT_MS,
+        bodyTimeout: GEMINI_REQUEST_TIMEOUT_MS,
+      });
+    } catch (error) {
+      lastError = error;
+      log("Gemini key " + (index + 1) + "/" + GEMINI_API_KEYS.length + " request failed (" + (error && error.code ? error.code : error.message) + "); trying the next configured key.");
+      continue;
+    }
 
     if (response.statusCode < 400) {
       return response.body.json();
@@ -984,7 +991,7 @@ async function callGeminiGenerateContent(modelName, body) {
 
     lastError = new Error("Gemini generateContent failed: HTTP " + response.statusCode + (details ? " - " + details : ""));
 
-    if (![401, 403, 429].includes(response.statusCode)) {
+    if (![401, 403, 429, 500, 502, 503, 504].includes(response.statusCode)) {
       throw lastError;
     }
 
@@ -993,7 +1000,6 @@ async function callGeminiGenerateContent(modelName, body) {
 
   throw lastError || new Error("Aucune clé Gemini disponible.");
 }
-
 async function generateChatCompletionTextWithGemini(messages) {
   const mapped = mapOpenAiMessagesToVertex(messages);
   if (!mapped.contents.length) return null;
