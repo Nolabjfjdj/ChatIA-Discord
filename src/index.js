@@ -17,7 +17,7 @@ try {
   // Falls ffmpeg-static nicht geladen werden kann, gibt es später eine klare Fehlermeldung beim Abspielen.
 }
 
-const { Client, GatewayIntentBits, ChannelType, PermissionFlagsBits } = require("discord.js");
+const { Client, GatewayIntentBits, ChannelType, PermissionFlagsBits, REST, Routes, SlashCommandBuilder } = require("discord.js");
 const {
   joinVoiceChannel,
   createAudioPlayer,
@@ -1570,8 +1570,114 @@ async function handleSayCommand(message, text) {
   await message.reply(`Je prononce : "${clipped}"`);
 }
 
+async function registerSlashCommands() {
+  const commands = [
+    new SlashCommandBuilder().setName("join").setDescription("Rejoindre ton salon vocal et écouter"),
+    new SlashCommandBuilder().setName("leave").setDescription("Quitter le salon vocal"),
+    new SlashCommandBuilder().setName("say").setDescription("Faire prononcer un texte au bot").addStringOption(option => option.setName("texte").setDescription("Texte à prononcer").setRequired(true).setMaxLength(1500)),
+    new SlashCommandBuilder().setName("logs").setDescription("Configurer les journaux de dialogue")
+      .addSubcommand(sub => sub.setName("on").setDescription("Activer l’affichage des dialogues"))
+      .addSubcommand(sub => sub.setName("off").setDescription("Désactiver l’affichage des dialogues"))
+      .addSubcommand(sub => sub.setName("salon").setDescription("Choisir le salon de journalisation").addChannelOption(option => option.setName("salon").setDescription("Salon texte où envoyer les dialogues").setRequired(true).addChannelTypes(ChannelType.GuildText)))
+      .addSubcommand(sub => sub.setName("reset").setDescription("Revenir au salon texte par défaut")),
+    new SlashCommandBuilder().setName("autoreconnect").setDescription("Configurer la reconnexion vocale automatique")
+      .addSubcommand(sub => sub.setName("on").setDescription("Activer la reconnexion automatique"))
+      .addSubcommand(sub => sub.setName("off").setDescription("Désactiver la reconnexion automatique")),
+    new SlashCommandBuilder().setName("help").setDescription("Afficher l’aide du bot")
+  ].map(command => command.toJSON());
+  const rest = new REST({ version: "10" }).setToken(process.env.DISCORD_TOKEN);
+  await rest.put(Routes.applicationCommands(client.user.id), { body: commands });
+  log("Commandes slash enregistrées.");
+}
+
+async function handleSlashCommand(interaction) {
+  if (!interaction.inGuild() || !interaction.guild) {
+    await interaction.reply({ content: "Cette commande doit être utilisée dans un serveur.", ephemeral: true });
+    return;
+  }
+  const command = interaction.commandName;
+  const reply = async content => {
+    const payload = typeof content === "string" ? { content } : content;
+    if (interaction.deferred || interaction.replied) return interaction.followUp(payload);
+    return interaction.reply(payload);
+  };
+  try {
+    if (command === "join") {
+      const member = await interaction.guild.members.fetch(interaction.user.id);
+      await joinForMessage({ guild: interaction.guild, member, channel: interaction.channel, reply });
+      return;
+    }
+    if (command === "leave") {
+      if (isAutoJoinEnabled(interaction.guild.id)) setAutoJoinCooldown(interaction.guild.id, AUTO_JOIN_MANUAL_LEAVE_COOLDOWN_MS);
+      await destroySession(interaction.guild.id);
+      await reply(isAutoJoinEnabled(interaction.guild.id)
+        ? `Salon vocal quitté. Reconnexion automatique suspendue pendant ${Math.round(AUTO_JOIN_MANUAL_LEAVE_COOLDOWN_MS / 1000)} s.`
+        : "Salon vocal quitté.");
+      return;
+    }
+    if (command === "say") {
+      const session = sessions.get(interaction.guild.id);
+      if (!session) {
+        await reply("Je ne suis dans aucun salon vocal. Utilise d’abord /join.");
+        return;
+      }
+      const clipped = clipForTts(interaction.options.getString("texte", true));
+      await interaction.deferReply();
+      await enqueueSessionWork(session, async () => { await speakReply(session, clipped); });
+      await reply(`Je prononce : "${clipped}"`);
+      return;
+    }
+    if (command === "logs" || command === "autoreconnect") {
+      const member = await interaction.guild.members.fetch(interaction.user.id);
+      if (!member.permissions.has(PermissionFlagsBits.ManageGuild)) {
+        await reply({ content: "Il faut la permission **Gérer le serveur** pour modifier ce réglage.", ephemeral: true });
+        return;
+      }
+      const action = interaction.options.getSubcommand();
+      if (command === "logs") {
+        const settings = getDialogueLogSettings(interaction.guild.id);
+        if (action === "on") { settings.enabled = true; await reply("Affichage des dialogues réactivé."); }
+        else if (action === "off") { settings.enabled = false; await reply("Affichage des dialogues désactivé."); }
+        else if (action === "salon") {
+          const channel = interaction.options.getChannel("salon", true);
+          if (!channel.isTextBased()) { await reply({ content: "Choisis un salon texte.", ephemeral: true }); return; }
+          settings.channelId = channel.id;
+          await reply("Les dialogues seront envoyés dans " + channel.toString() + ".");
+        } else if (action === "reset") {
+          settings.channelId = null;
+          await reply("Le salon des dialogues revient au salon texte par défaut.");
+        }
+      } else {
+        if (action === "on") { autoJoinOverrides.set(interaction.guild.id, true); await reply("Reconnexion automatique activée."); }
+        else { autoJoinOverrides.set(interaction.guild.id, false); await reply("Reconnexion automatique désactivée."); }
+      }
+      return;
+    }
+    if (command === "help") {
+      await reply([
+        "**Commandes slash de ChatIA**",
+        "/join - Rejoindre ton salon vocal",
+        "/leave - Quitter le salon vocal",
+        "/say texte - Faire prononcer un texte",
+        "/logs on, /logs off, /logs salon, /logs reset - Configurer les journaux (permission Gérer le serveur)",
+        "/autoreconnect on ou /autoreconnect off - Configurer la reconnexion automatique (permission Gérer le serveur)",
+        "/help - Afficher cette aide"
+      ].join("\\n"));
+    }
+  } catch (error) {
+    log("Slash command error", error);
+    await reply({ content: "Une erreur est survenue pendant l’exécution de la commande.", ephemeral: true }).catch(() => {});
+  }
+}
+
+client.on("interactionCreate", async interaction => {
+  if (!interaction.isChatInputCommand()) return;
+  await handleSlashCommand(interaction);
+});
+
 client.once("ready", async () => {
   await ensureRecordingsDir();
+  try { await registerSlashCommands(); } catch (error) { log("Échec de l’enregistrement des commandes slash", error); }
   log(`Bot online als ${client.user.tag}`);
   log(`Prefix: ${PREFIX}`);
   log(
@@ -1735,6 +1841,7 @@ client.on("messageCreate", async (message) => {
           `${PREFIX}autoreconnect on/off - Activer ou désactiver la reconnexion automatique`,
           `Rejoindre automatiquement : ${isAutoJoinEnabled(message.guild.id) ? "activé" : "désactivé"}`,
           `${PREFIX}help - Afficher l’aide`,
+          "Commandes slash : /join, /leave, /say, /logs, /autoreconnect, /help",
         ].join("\n"),
       );
       return;
