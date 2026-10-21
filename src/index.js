@@ -1592,7 +1592,7 @@ async function generateTextChatReply(guild, channel, author, text, session = nul
   if (session) {
     memory.lastReplyAt = Date.now();
     memory.lastReplyByUser.set(author.id, Date.now());
-    void sendDialogueLog(session, "**" + username + " (texte) :** " + text + "\\n**Bot :** " + reply);
+    void sendDialogueLog(session, "**" + username + " (texte) :** " + text + "\n**Bot :** " + reply);
   }
   return { reply: displayedReply, ttsText: clipForTts(reply), session };
 }
