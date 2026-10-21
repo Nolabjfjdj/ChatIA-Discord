@@ -732,6 +732,7 @@ function createSession(guildId, connection, textChannelId, voiceChannelId) {
     botSpeaking: false,
     memory,
     destroyed: false,
+    recoveryPromise: null,
   };
 
   player.on(AudioPlayerStatus.Playing, () => {
@@ -757,10 +758,32 @@ function createSession(guildId, connection, textChannelId, voiceChannelId) {
   });
 
   connection.on(VoiceConnectionStatus.Disconnected, () => {
-    // Minimales Verhalten: Session sauber beenden.
-    destroySession(guildId).catch((error) => {
-      log(`[${guildId}] destroySession after disconnect failed`, error);
-    });
+    if (session.destroyed || session.recoveryPromise) return;
+
+    session.recoveryPromise = (async () => {
+      try {
+        await entersState(connection, VoiceConnectionStatus.Ready, 10_000);
+        log(`[${guildId}] Voice connection recovered after a temporary disconnect.`);
+      } catch (error) {
+        if (session.destroyed) return;
+
+        log(`[${guildId}] Voice connection did not recover; resetting session.`, error?.message || error);
+        await destroySession(guildId);
+
+        if (isAutoJoinEnabled(guildId)) {
+          setAutoJoinCooldown(guildId, AUTO_JOIN_RETRY_COOLDOWN_MS);
+          const retryTimer = setTimeout(() => {
+            const guild = client.guilds.cache.get(guildId);
+            if (!guild || !isAutoJoinEnabled(guildId)) return;
+            autoJoinCooldowns.delete(guildId);
+            enqueueAutoJoinReconcile(guild, "voice-recovery");
+          }, AUTO_JOIN_RETRY_COOLDOWN_MS);
+          retryTimer.unref?.();
+        }
+      } finally {
+        session.recoveryPromise = null;
+      }
+    })();
   });
 
   connection.receiver.speaking.on("start", (userId) => {
@@ -1512,12 +1535,11 @@ client.once("ready", async () => {
     `Reply-Filter: global=${GLOBAL_REPLY_COOLDOWN_MS}ms user=${USER_REPLY_COOLDOWN_MS}ms echo=${BOT_ECHO_GUARD_MS}ms dup=${DUPLICATE_TRANSCRIPT_WINDOW_MS}ms`,
   );
   log(`Memory: messages=${MEMORY_MAX_MESSAGES}, chars=${MEMORY_MAX_CHARS}, TTS max chars=${MAX_TTS_CHARS}`);
-  log(
-    `Auto-Join Voice: ${isAutoJoinEnabled(guild.id) ? "aktiv" : "deaktiviert"} (leave cooldown=${AUTO_JOIN_MANUAL_LEAVE_COOLDOWN_MS}ms)`,
-  );
-
-  if (isAutoJoinEnabled(guild.id)) {
-    for (const guild of client.guilds.cache.values()) {
+  for (const guild of client.guilds.cache.values()) {
+    log(
+      `[${guild.id}] Auto-Join Voice: ${isAutoJoinEnabled(guild.id) ? "aktiv" : "deaktiviert"} (leave cooldown=${AUTO_JOIN_MANUAL_LEAVE_COOLDOWN_MS}ms)`,
+    );
+    if (isAutoJoinEnabled(guild.id)) {
       enqueueAutoJoinReconcile(guild, "startup");
     }
   }
