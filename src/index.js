@@ -1432,9 +1432,12 @@ async function findVoiceCommandTarget(guild, targetText) {
 async function handleVoiceServerCommand(session, userId, transcript) {
   const guild = client.guilds.cache.get(session.guildId);
   const member = guild?.members.cache.get(userId);
-  if (!guild || !member || !hasExplicitBotWakeWord(transcript)) return null;
-
-  const commandText = stripBotWakeWord(transcript).replace(/[.!?]+$/g, "").trim();
+  if (!guild || !member) return null;
+  const hasWakeWord = hasExplicitBotWakeWord(transcript);
+  const rawCommand = hasWakeWord ? stripBotWakeWord(transcript) : normalizeTranscriptText(transcript);
+  const commandText = rawCommand.replace(/^[«"']+|[»"']+$/g, "").replace(/[.!?]+$/g, "").trim();
+  const looksLikeVoiceAction = /^(?:(?:peux[- ]tu\s+)?(?:expulse|expulser|kick|vire|virer|déconnecte|deconnecte|déconnecter|deconnecter|déco|deco|sors|sortir|déplace|deplace|déplacer|deplacer|bouge|transfère|transfere|passe[- ]moi|passe moi|mute|muter|timeout|mettre en pause|réduire au silence)\b)/i.test(commandText);
+  if (!hasWakeWord && !looksLikeVoiceAction) return null;
   const pendingKey = guild.id;
   let pending = pendingVoiceActions.get(pendingKey);
   const normalizedCommand = canonicalizeTranscript(commandText);
@@ -1486,8 +1489,8 @@ async function handleVoiceServerCommand(session, userId, transcript) {
   }
 
   const kickMatch = commandText.match(/^(?:peux[- ]tu\s+)?(?:expulse|expulser|kick|vire|virer)\s+(.+)$/i);
-  const disconnectMatch = commandText.match(/^(?:peux[- ]tu\s+)?(?:déconnecte|deconnecte|déconnecter|deconnecter|déco|deco|sors|sortir)\s+(.+?)(?:\s+(?:du|des)\s+(?:salon|salons)\s+vocaux?)?$/i);
-  const moveMatch = commandText.match(/^(?:peux[- ]tu\s+)?(?:déplace|deplace|déplacer|deplacer|bouge|transfère|transfere)\s+(.+?)\s+(?:dans|vers|au|à)\s+(?:le\s+)?(?:salon\s+)?(.+)$/i);
+  const disconnectMatch = commandText.match(/^(?:peux[- ]tu\s+)?(?:déconnecte|deconnecte|déconnecter|deconnecter|déco|deco|sors|sortir)\s+(.+?)(?:\s+(?:du|des)\s+(?:salon|salons)\s+voc(?:al|ale|aux))?$/i);
+  const moveMatch = commandText.match(/^(?:peux[- ]tu\s+)?(?:déplace|deplace|déplacer|deplacer|bouge|transfère|transfere|passe[- ]moi|passe moi)(?:\s+(.+?))?\s+(?:dans|vers|au|à)\s+(?:le\s+)?(?:salon\s+)?(.+)$/i);
   const timeoutMatch = commandText.match(/^(?:peux[- ]tu\s+)?(?:mute|muter|timeout|mettre en pause|réduire au silence)\s+(.+?)(?:\s+(?:pendant|pour)\s+(\d+)\s*(s|sec|secondes?|m|min|minutes?|h|heures?))?$/i);
   if (disconnectMatch && /^(?:moi|me|moi-même|moi meme)$/i.test(disconnectMatch[1].trim())) {
     return "Je ne peux pas te déconnecter toi-même avec cette commande. Si tu veux quitter le salon, utilise !leave.";
@@ -1501,10 +1504,15 @@ async function handleVoiceServerCommand(session, userId, transcript) {
   const action = kickMatch ? "kick" : disconnectMatch ? "disconnect" : moveMatch ? "move" : "timeout";
   const permission = action === "kick" ? "KickMembers" : action === "disconnect" || action === "move" ? "MoveMembers" : "ModerateMembers";
   if (!member.permissions.has(PermissionFlagsBits[permission])) {
-    const permissionLabel = action === "kick" ? "Expulser des membres" : action === "disconnect" ? "Déplacer des membres" : "Modérer les membres";
-    return "Je ne peux pas faire ça : tu n’as pas la permission Discord requise (" + permissionLabel + ").";
+    const permissionLabel = action === "kick" ? "Expulser des membres" : action === "disconnect" || action === "move" ? "Déplacer des membres" : "Modérer les membres";
+    return "Ton compte Discord n’a pas la permission requise (" + permissionLabel + ").";
   }
-  const found = await findVoiceCommandTarget(guild, actionMatch[1].trim());
+  const requestedTargetText = action === "move" && (!moveMatch[1] || /^(?:moi|me|moi-même|moi meme)$/i.test(moveMatch[1].trim()))
+    ? "moi"
+    : actionMatch[1].trim();
+  const found = /^(?:moi|me|moi-même|moi meme)$/i.test(requestedTargetText)
+    ? { member }
+    : await findVoiceCommandTarget(guild, requestedTargetText);
   if (!found.member) {
     if (found.reason === "ambiguous-target") return "J’ai trouvé plusieurs membres possibles. Dis son nom d’utilisateur complet pour éviter une erreur.";
     return "Je ne trouve pas ce membre. Dis son nom d’utilisateur ou son surnom exact.";
@@ -1514,7 +1522,7 @@ async function handleVoiceServerCommand(session, userId, transcript) {
   if (action !== "disconnect" && action !== "move" && target.id === userId) return "Tu ne peux pas demander cette action sur toi-même.";
   if (target.id === guild.ownerId || target.id === botMember?.id) return "Je ne peux pas appliquer cette action à ce membre.";
   if (action !== "disconnect" && action !== "move" && guild.ownerId !== userId && target.roles.highest.comparePositionTo(member.roles.highest) >= 0) return "Je ne peux pas faire ça : le rôle de cette personne est égal ou supérieur au tien.";
-  if (!botMember?.permissions.has(PermissionFlagsBits[permission])) return "Je n’ai pas la permission Discord nécessaire pour faire ça.";
+  if (!botMember?.permissions.has(PermissionFlagsBits[permission])) return "Mon compte bot n’a pas la permission Discord requise (" + (action === "kick" ? "Expulser des membres" : action === "disconnect" || action === "move" ? "Déplacer des membres" : "Modérer les membres") + ").";
   if ((action === "disconnect" || action === "move") && !target.voice.channelId) return "Cette personne n’est actuellement dans aucun salon vocal.";
   if (action !== "disconnect" && action !== "move" && target.roles.highest.comparePositionTo(botMember.roles.highest) >= 0) return "Je ne peux pas agir sur ce membre : son rôle est égal ou supérieur au mien.";
 
