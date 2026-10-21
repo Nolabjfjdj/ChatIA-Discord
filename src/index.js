@@ -51,6 +51,17 @@ const GROQ_CHAT_MODEL = process.env.GROQ_CHAT_MODEL || "llama-3.1-8b-instant";
 const GROQ_TRANSCRIBE_MODEL =
   process.env.GROQ_TRANSCRIBE_MODEL || "whisper-large-v3-turbo";
 const LLM_PROVIDER = (process.env.LLM_PROVIDER || "gemini").toLowerCase();
+const GROQ_API_KEYS = [...new Set([
+  process.env.GROQ_API_KEY,
+  ...Object.entries(process.env)
+    .filter(([name]) => /^GROQ_API_KEY\d+$/.test(name))
+    .sort(([a], [b]) => Number(a.slice("GROQ_API_KEY".length)) - Number(b.slice("GROQ_API_KEY".length)))
+    .map(([, value]) => value),
+].map((key) => String(key || "").trim()).filter(Boolean))];
+const GROQ_TRANSCRIPTION_CLIENTS = GROQ_API_KEYS.map((apiKey) => new OpenAI({
+  apiKey,
+  baseURL: GROQ_BASE_URL,
+}));
 const GEMINI_API_KEYS = [...new Set([process.env.GEMINI_API_KEY, ...(process.env.GEMINI_API_KEYS || "").split(",")].map((key) => String(key || "").trim()).filter(Boolean))];
 const GEMINI_BASE_URL = process.env.GEMINI_BASE_URL || "https://generativelanguage.googleapis.com/v1beta";
 const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-3.8-flash";
@@ -112,7 +123,7 @@ const RECORDINGS_DIR = path.join(process.cwd(), "tmp-recordings");
 const STT_LANGUAGE = normalizeSttLanguage(BOT_LANGUAGE);
 const GOOGLE_TTS_LANGUAGE = normalizeGoogleTtsLanguage(BOT_LANGUAGE);
 
-if (LLM_PROVIDER !== "gemini" && !process.env.GROQ_API_KEY) {
+if (LLM_PROVIDER !== "gemini" && GROQ_API_KEYS.length === 0) {
   console.error("Fehlende Umgebungsvariable: GROQ_API_KEY (erforderlich fuer den Groq-Provider).");
   process.exit(1);
 }
@@ -133,7 +144,7 @@ if (!["groq", "vertex", "gemini"].includes(LLM_PROVIDER)) {
 }
 
 const groq = new OpenAI({
-  apiKey: process.env.GROQ_API_KEY || "not-used-with-gemini",
+  apiKey: GROQ_API_KEYS[0] || "not-used-with-gemini",
   baseURL: GROQ_BASE_URL,
 });
 
@@ -979,8 +990,31 @@ async function safeUnlink(filePath) {
 
 async function transcribeAudio(filePath) {
   try {
-    let text;
-    if (LLM_PROVIDER === "gemini") {
+    let text = "";
+    if (GROQ_TRANSCRIPTION_CLIENTS.length > 0) {
+      let lastError = null;
+      for (let index = 0; index < GROQ_TRANSCRIPTION_CLIENTS.length; index += 1) {
+        try {
+          const payload = {
+            file: fs.createReadStream(filePath),
+            model: GROQ_TRANSCRIBE_MODEL,
+            language: STT_LANGUAGE,
+            temperature: 0,
+          };
+          if (STT_LANGUAGE === "fr") payload.prompt = "Conversation vocale Discord en français. Transcris naturellement en français, sans traduire ni ajouter de commentaire.";
+          if (STT_LANGUAGE === "de") payload.prompt = "Discord Voice Chat auf Deutsch. Transkribiere natürlich auf Deutsch, keine Übersetzung.";
+          const result = await GROQ_TRANSCRIPTION_CLIENTS[index].audio.transcriptions.create(payload);
+          text = result && result.text ? result.text : "";
+          log("Groq transcription succeeded using configured key slot " + (index + 1) + ".");
+          break;
+        } catch (error) {
+          lastError = error;
+          const status = Number(error?.status || error?.statusCode || 0);
+          log("Groq transcription key slot " + (index + 1) + " failed with status " + (status || "network error") + "; trying the next configured key if available.");
+        }
+      }
+      if (!text && lastError) throw new Error("All configured Groq transcription keys failed: " + String(lastError?.status || lastError?.statusCode || lastError?.message || "unknown error"));
+    } else if (LLM_PROVIDER === "gemini") {
       const audio = await fsp.readFile(filePath);
       const languageName = STT_LANGUAGE === "fr" ? "French" : STT_LANGUAGE === "de" ? "German" : STT_LANGUAGE === "es" ? "Spanish" : STT_LANGUAGE === "en" ? "English" : STT_LANGUAGE;
       const data = await callGeminiGenerateContent(GEMINI_TRANSCRIBE_MODEL, {
@@ -994,10 +1028,7 @@ async function transcribeAudio(filePath) {
         ? data.candidates[0].content.parts.map((part) => typeof part.text === "string" ? part.text : "").join(" ").trim()
         : "";
     } else {
-      const payload = { file: fs.createReadStream(filePath), model: GROQ_TRANSCRIBE_MODEL, language: STT_LANGUAGE, temperature: 0 };
-      if (STT_LANGUAGE === "de") payload.prompt = "Discord Voice Chat auf Deutsch. Transkribiere natuerlich auf Deutsch, keine Uebersetzung.";
-      const result = await groq.audio.transcriptions.create(payload);
-      text = result && result.text;
+      throw new Error("No Groq transcription key is configured.");
     }
     text = normalizeTranscriptText(text);
     await safeUnlink(filePath);
@@ -1005,7 +1036,7 @@ async function transcribeAudio(filePath) {
     log("Transcription : " + text);
     return text;
   } catch (error) {
-    log("Transcription error", error);
+    log("Transcription error", error?.message || error);
     await safeUnlink(filePath);
     return null;
   }
