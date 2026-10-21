@@ -100,7 +100,7 @@ const MIN_UNADDRESSED_WORDS = parseEnvInt(process.env.MIN_UNADDRESSED_WORDS, 5);
 const BOT_FOLLOW_UP_WINDOW_MS = parseEnvInt(process.env.BOT_FOLLOW_UP_WINDOW_MS, 90000);
 const GEMINI_REQUEST_TIMEOUT_MS = parseEnvInt(process.env.GEMINI_REQUEST_TIMEOUT_MS, 12000);
 const MIN_TRANSCRIPT_WORDS = parseEnvInt(process.env.MIN_TRANSCRIPT_WORDS, 2);
-const CHAT_MAX_TOKENS = parseEnvInt(process.env.CHAT_MAX_TOKENS, 220);
+const CHAT_MAX_TOKENS = parseEnvInt(process.env.CHAT_MAX_TOKENS, 450);
 const MAX_TTS_CHARS = parseEnvInt(process.env.MAX_TTS_CHARS, 1200);
 const MEMORY_MAX_MESSAGES = parseEnvInt(process.env.MEMORY_MAX_MESSAGES, 24);
 const MEMORY_MAX_CHARS = parseEnvInt(process.env.MEMORY_MAX_CHARS, 7000);
@@ -1179,6 +1179,10 @@ async function generateChatCompletionTextWithGemini(messages) {
   if (mapped.systemInstruction) body.systemInstruction = mapped.systemInstruction;
   const data = await callGeminiGenerateContent(GEMINI_MODEL, body);
   const candidate = data && data.candidates && data.candidates[0];
+  const finishReason = String(candidate?.finishReason || "");
+  if (finishReason && finishReason !== "STOP") {
+    log("Gemini response ended with finishReason=" + finishReason + "; output token limit=" + CHAT_MAX_TOKENS + ".");
+  }
   if (candidate && candidate.safetyRatings && candidate.safetyRatings.some((rating) => rating.blocked === true)) return "Je ne peux pas répondre à cette demande. Essaie de la reformuler.";
   const text = candidate && candidate.content && candidate.content.parts ? candidate.content.parts.map((part) => typeof part.text === "string" ? part.text : "").join(" ").trim() : "";
   return normalizeTranscriptText(text);
@@ -1323,7 +1327,7 @@ async function generateReply(session, userId, transcript, decision = null) {
 
     const textChannel = client.channels.cache.get(session.textChannelId);
     if (textChannel && textChannel.isTextBased()) {
-      void sendDialogueLog(session, `**${username}:** ${transcript}\n**Bot:** ${memoryReply}`);
+      void sendDialogueLog(session, `**${username}:** ${transcript}\n**Bot:** ${reply}`);
     }
 
     return clippedReply;
