@@ -404,17 +404,21 @@ function buildHardCapabilityReply(transcript) {
   return null;
 }
 
-function looksDirectedAtBot(text) {
+function hasExplicitBotWakeWord(text) {
   const lower = normalizeTranscriptText(text).toLowerCase();
   if (!lower) return false;
 
   const normalizedText = " " + lower.replace(/[^a-z0-9à-ÿ]+/gi, " ") + " ";
-  if (BOT_WAKE_WORDS.some((wakeWord) => {
+  return BOT_WAKE_WORDS.some((wakeWord) => {
     const normalizedWakeWord = wakeWord.toLowerCase().replace(/[^a-z0-9à-ÿ]+/gi, " ").trim();
-    return normalizedText.includes(" " + normalizedWakeWord + " ");
-  })) {
-    return true;
-  }
+    return normalizedWakeWord && normalizedText.includes(" " + normalizedWakeWord + " ");
+  });
+}
+
+function looksDirectedAtBot(text) {
+  const lower = normalizeTranscriptText(text).toLowerCase();
+  if (!lower) return false;
+  if (hasExplicitBotWakeWord(text)) return true;
 
   return /^(qui|quoi|que|qu’est-ce que|quest-ce que|comment|où|ou|quand|pourquoi|est-ce que|est ce que|c’est quoi|c'est quoi|c est quoi|ça veut dire quoi|ca veut dire quoi|tu peux|peux-tu|peux tu|tu peux me dire|tu peux expliquer|tu connais|tu sais|explique|explique-moi|explique moi|dis-moi|dis moi|tu pourrais|pourrais-tu|pourrais tu|wer|was|wie|wo|wann|warum|wieso|weshalb|kannst du|bitte|erklär|erklaer|sag mal)(\s|$)/i.test(lower);
 }
@@ -545,11 +549,12 @@ async function shouldIgnoreTranscript(session, userId, transcript) {
   }
 
   const canonical = canonicalizeTranscript(clean);
+  const hasExplicitWakeWord = hasExplicitBotWakeWord(clean);
   const hasAddressingClue = looksDirectedAtBot(clean);
   const recentBotConversation = now - memory.lastReplyAt < 30000;
-  let directedAtBot = false;
+  let directedAtBot = hasExplicitWakeWord;
 
-  if (hasAddressingClue || recentBotConversation) {
+  if (!hasExplicitWakeWord && (hasAddressingClue || recentBotConversation)) {
     directedAtBot = await classifyWhetherAddressedToBot(memory, clean, hasAddressingClue);
   }
 
