@@ -672,10 +672,10 @@ async function shouldIgnoreTranscript(session, userId, transcript) {
 
   const canonical = canonicalizeTranscript(clean);
   const voiceChannel = client.channels.cache.get(session.voiceChannelId);
-  if (transcriptMentionsAnotherVoiceMember(voiceChannel, userId, clean)) {
+  const hasExplicitWakeWord = hasExplicitBotWakeWord(clean);
+  if (!hasExplicitWakeWord && transcriptMentionsAnotherVoiceMember(voiceChannel, userId, clean)) {
     return { ignore: true, reason: "not-addressed-to-bot" };
   }
-  const hasExplicitWakeWord = hasExplicitBotWakeWord(clean);
   const hasAddressingClue = looksDirectedAtBot(clean);
   const humanCount = getHumanVoiceMemberCount(voiceChannel);
   const aloneWithBot = humanCount === 1;
