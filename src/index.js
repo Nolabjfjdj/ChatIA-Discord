@@ -1066,8 +1066,11 @@ function buildVertexGenerateContentUrl() {
   return url.toString();
 }
 
+const GEMINI_MODEL_COOLDOWN_MS = parseEnvInt(process.env.GEMINI_MODEL_COOLDOWN_MS, 60000);
+const geminiModelCooldowns = new Map();
+
 async function callGeminiGenerateContent(modelName, body) {
-  const base = GEMINI_BASE_URL.replace(/\/+$/, "");
+  const base = GEMINI_BASE_URL.replace(/\\/+$/, "");
   const fallbackModels = parseCsvEnv(
     process.env.GEMINI_FALLBACK_MODELS,
     ["gemini-3.6-flash", "gemini-3.5-flash-lite"],
@@ -1077,7 +1080,16 @@ async function callGeminiGenerateContent(modelName, body) {
 
   for (let modelIndex = 0; modelIndex < models.length; modelIndex += 1) {
     const currentModel = models[modelIndex];
+    const cooldownUntil = geminiModelCooldowns.get(currentModel) || 0;
+    if (cooldownUntil > Date.now()) {
+      log("Gemini model " + currentModel + " is rate-limited; skipping it for " + Math.ceil((cooldownUntil - Date.now()) / 1000) + "s and trying the next model.");
+      lastError = new Error("Gemini model " + currentModel + " is in rate-limit cooldown.");
+      continue;
+    }
+    if (cooldownUntil) geminiModelCooldowns.delete(currentModel);
+
     let switchModel = false;
+    let rateLimitedKeys = 0;
 
     for (let keyIndex = 0; keyIndex < GEMINI_API_KEYS.length; keyIndex += 1) {
       const url = new URL(base + "/models/" + encodeURIComponent(currentModel) + ":generateContent");
@@ -1099,6 +1111,7 @@ async function callGeminiGenerateContent(modelName, body) {
       }
 
       if (response.statusCode < 400) {
+        geminiModelCooldowns.delete(currentModel);
         if (currentModel !== modelName) {
           log("Gemini fallback model succeeded: " + currentModel + ".");
         }
@@ -1111,6 +1124,8 @@ async function callGeminiGenerateContent(modelName, body) {
       } catch {}
 
       lastError = new Error("Gemini generateContent failed: model " + currentModel + ", HTTP " + response.statusCode + (details ? " - " + details : ""));
+
+      if (response.statusCode === 429) rateLimitedKeys += 1;
 
       if (response.statusCode === 503 || response.statusCode === 502 || response.statusCode === 504) {
         log("Gemini model " + currentModel + " returned HTTP " + response.statusCode + "; switching to the next fallback model.");
@@ -1125,8 +1140,13 @@ async function callGeminiGenerateContent(modelName, body) {
       log("Gemini model " + currentModel + ", key " + (keyIndex + 1) + "/" + GEMINI_API_KEYS.length + " failed with HTTP " + response.statusCode + "; trying the next configured key.");
     }
 
-    if (!switchModel && modelIndex < models.length - 1) {
-      log("Gemini model " + currentModel + " failed with the configured keys; trying fallback model " + models[modelIndex + 1] + ".");
+    if (!switchModel && GEMINI_API_KEYS.length > 0 && rateLimitedKeys === GEMINI_API_KEYS.length) {
+      geminiModelCooldowns.set(currentModel, Date.now() + GEMINI_MODEL_COOLDOWN_MS);
+      log("All configured keys returned HTTP 429 for Gemini model " + currentModel + "; skipping it for " + Math.ceil(GEMINI_MODEL_COOLDOWN_MS / 1000) + "s before retrying it.");
+    }
+
+    if (modelIndex < models.length - 1) {
+      log("Gemini model " + currentModel + " did not succeed; trying fallback model " + models[modelIndex + 1] + ".");
     }
   }
 
