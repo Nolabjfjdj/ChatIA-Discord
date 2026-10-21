@@ -157,6 +157,7 @@ const client = new Client({
 });
 
 /** @type {Map<string, any>} */
+const pendingVoiceActions = new Map();
 const sessions = new Map();
 /** @type {Map<string, number>} */
 const autoJoinCooldowns = new Map();
@@ -677,18 +678,14 @@ async function shouldIgnoreTranscript(session, userId, transcript) {
     return { ignore: true, reason: "not-addressed-to-bot" };
   }
   const hasAddressingClue = looksDirectedAtBot(clean);
-  const humanCount = getHumanVoiceMemberCount(voiceChannel);
-  const aloneWithBot = humanCount === 1;
   const lastReplyToThisUser = memory.lastReplyByUser.get(userId) || 0;
   const recentConversationWithThisUser = now - lastReplyToThisUser < BOT_FOLLOW_UP_WINDOW_MS;
+  const shortFollowUp = /^(oui|non|ouais|nan|d accord|daccord|ok|okay|vas y|continue|pourquoi|comment ca|repete|redis|encore|exactement|c est ca|merci)$/i.test(canonical);
   let directedAtBot = hasExplicitWakeWord;
 
-  if (!hasExplicitWakeWord && aloneWithBot) {
+  if (!hasExplicitWakeWord && recentConversationWithThisUser && (shortFollowUp || hasAddressingClue)) {
     directedAtBot = true;
-    log(`[${session.guildId}] Accepting voice transcript because only one human is in the voice channel.`);
-  } else if (!hasExplicitWakeWord && recentConversationWithThisUser) {
-    directedAtBot = true;
-    log(`[${session.guildId}] Accepting transcript as a follow-up from the same user who recently spoke with the bot.`);
+    log(`[${session.guildId}] Accepting a plausible follow-up from the same user who recently spoke with the bot.`);
   } else if (!hasExplicitWakeWord && hasAddressingClue) {
     directedAtBot = await classifyWhetherAddressedToBot(memory, clean, hasAddressingClue);
   }
@@ -1065,9 +1062,15 @@ async function captureUtterance(session, userId) {
           return;
         }
 
-        const reply = await generateReply(session, userId, decision.transcript, decision);
+        const voiceCommandReply = await handleVoiceServerCommand(session, userId, decision.transcript);
+        const reply = voiceCommandReply || await generateReply(session, userId, decision.transcript, decision);
         if (!reply) return;
 
+        if (voiceCommandReply) {
+          session.memory.lastReplyAt = Date.now();
+          session.memory.lastReplyByUser.set(userId, Date.now());
+          session.memory.lastTouchedAt = Date.now();
+        }
         await speakReply(session, reply);
       } finally {
         await safeUnlink(filePath);
@@ -1381,6 +1384,136 @@ async function generateChatCompletionTextWithVertex(messages) {
   }
 
   return normalizeTranscriptText(text);
+}
+
+function stripBotWakeWord(transcript) {
+  const original = normalizeTranscriptText(transcript);
+  const normalized = canonicalizeWakeWord(original);
+  const variants = [...new Set([...BOT_WAKE_WORDS, "chatia", "chat ia", "chaia", "cha ia", "tjadija", "tja dija", "tchatia", "tchat ia", "tchattia", "tchatteia", "tchatte ia", "chat y a", "chati a"])]
+    .map((word) => canonicalizeWakeWord(word))
+    .filter(Boolean)
+    .sort((a, b) => b.length - a.length);
+  for (const word of variants) {
+    if (normalized === word) return "";
+    if (normalized.startsWith(word + " ")) {
+      const wordCount = word.split(" ").length;
+      return original.split(/\s+/).slice(wordCount).join(" ").replace(/^[,;:.!?-]+/, "").trim();
+    }
+  }
+  return original;
+}
+
+function normalizeMemberSearch(value) {
+  return canonicalizeWakeWord(value).normalize("NFD").replace(/\p{Diacritic}/gu, "").replace(/[^a-z0-9 ]/g, "").replace(/\s+/g, " ").trim();
+}
+
+async function findVoiceCommandTarget(guild, targetText) {
+  const target = normalizeMemberSearch(targetText);
+  if (!target || target.length < 2) return { member: null, reason: "missing-target" };
+  let candidates = [...guild.members.cache.values()].filter((entry) => !entry.user?.bot);
+  const exact = candidates.filter((entry) => [entry.displayName, entry.user?.globalName, entry.user?.username]
+    .filter(Boolean).some((name) => normalizeMemberSearch(name) === target));
+  if (exact.length === 1) return { member: exact[0] };
+  if (exact.length > 1) return { member: null, reason: "ambiguous-target" };
+  try {
+    const fetched = await guild.members.fetch({ query: targetText, limit: 10 });
+    candidates = [...new Map([...candidates, ...fetched.values()].map((entry) => [entry.id, entry])).values()];
+  } catch {}
+  const partial = candidates.filter((entry) => [entry.displayName, entry.user?.globalName, entry.user?.username]
+    .filter(Boolean).some((name) => {
+      const normalizedName = normalizeMemberSearch(name);
+      return normalizedName === target || normalizedName.startsWith(target + " ") || target.startsWith(normalizedName + " ");
+    }));
+  if (partial.length === 1) return { member: partial[0] };
+  return { member: null, reason: partial.length > 1 ? "ambiguous-target" : "unknown-target" };
+}
+
+async function handleVoiceServerCommand(session, userId, transcript) {
+  const guild = client.guilds.cache.get(session.guildId);
+  const member = guild?.members.cache.get(userId);
+  if (!guild || !member || !hasExplicitBotWakeWord(transcript)) return null;
+
+  const commandText = stripBotWakeWord(transcript).replace(/[.!?]+$/g, "").trim();
+  const pendingKey = guild.id;
+  let pending = pendingVoiceActions.get(pendingKey);
+  const normalizedCommand = canonicalizeTranscript(commandText);
+  const confirmation = /^(oui|confirme|je confirme|confirmer|vas y|fais le|execute)$/i.test(normalizedCommand);
+  const cancellation = /^(non|annule|annuler|laisse tomber|ne le fais pas)$/i.test(normalizedCommand);
+
+  if (pending && pending.expiresAt <= Date.now()) {
+    pendingVoiceActions.delete(pendingKey);
+    pending = null;
+  }
+  if (pending && pending.requesterId === userId && confirmation) {
+    pendingVoiceActions.delete(pendingKey);
+    const target = await guild.members.fetch(pending.targetId).catch(() => null);
+    if (!target) return "Je ne trouve plus ce membre. Action annulée.";
+    const botMember = guild.members.me;
+    if (!member.permissions.has(PermissionFlagsBits[pending.permission])) return "Tu n’as plus la permission nécessaire. Action annulée.";
+    if (!botMember?.permissions.has(PermissionFlagsBits[pending.botPermission])) return "Je n’ai pas la permission Discord nécessaire pour faire ça.";
+    if (target.id === userId || target.id === guild.ownerId || target.id === botMember.id) return "Je ne peux pas appliquer cette action à ce membre.";
+    if (target.roles.highest.comparePositionTo(member.roles.highest) >= 0 && guild.ownerId !== userId) return "Discord empêche cette action : le rôle de cette personne est égal ou supérieur au tien.";
+    if (target.roles.highest.comparePositionTo(botMember.roles.highest) >= 0) return "Discord empêche cette action : son rôle est égal ou supérieur au mien.";
+    try {
+      if (pending.action === "kick") {
+        await target.kick("Commande vocale confirmée par " + member.user.tag);
+        return "C’est fait, " + (target.displayName || target.user.username) + " a été expulsé du serveur.";
+      }
+      await target.timeout(pending.durationMs, "Commande vocale confirmée par " + member.user.tag);
+      return "C’est fait, " + (target.displayName || target.user.username) + " est mis en pause pendant " + Math.round(pending.durationMs / 60000) + " minutes.";
+    } catch (error) {
+      log("Voice moderation action failed", error?.message || error);
+      return "Discord a refusé l’action. Vérifie mes permissions et la hiérarchie des rôles.";
+    }
+  }
+  if (pending && pending.requesterId === userId && cancellation) {
+    pendingVoiceActions.delete(pendingKey);
+    return "D’accord, j’annule l’action.";
+  }
+
+  const kickMatch = commandText.match(/^(?:peux[- ]tu\s+)?(?:expulse|expulser|kick|vire|virer)\s+(.+)$/i);
+  const timeoutMatch = commandText.match(/^(?:peux[- ]tu\s+)?(?:mute|muter|timeout|mettre en pause|réduire au silence)\s+(.+?)(?:\s+(?:pendant|pour)\s+(\d+)\s*(s|sec|secondes?|m|min|minutes?|h|heures?))?$/i);
+  const actionMatch = kickMatch || timeoutMatch;
+  if (!actionMatch) return null;
+
+  const action = kickMatch ? "kick" : "timeout";
+  const permission = action === "kick" ? "KickMembers" : "ModerateMembers";
+  if (!member.permissions.has(PermissionFlagsBits[permission])) {
+    return "Je ne peux pas faire ça : tu n’as pas la permission Discord requise (" + (action === "kick" ? "Expulser des membres" : "Modérer les membres") + ").";
+  }
+  const found = await findVoiceCommandTarget(guild, actionMatch[1].trim());
+  if (!found.member) {
+    if (found.reason === "ambiguous-target") return "J’ai trouvé plusieurs membres possibles. Dis son nom d’utilisateur complet pour éviter une erreur.";
+    return "Je ne trouve pas ce membre. Dis son nom d’utilisateur ou son surnom exact.";
+  }
+  const target = found.member;
+  const botMember = guild.members.me;
+  if (target.id === userId) return "Tu ne peux pas demander cette action sur toi-même.";
+  if (target.id === guild.ownerId || target.id === botMember?.id) return "Je ne peux pas appliquer cette action à ce membre.";
+  if (guild.ownerId !== userId && target.roles.highest.comparePositionTo(member.roles.highest) >= 0) return "Je ne peux pas faire ça : le rôle de cette personne est égal ou supérieur au tien.";
+  if (!botMember?.permissions.has(PermissionFlagsBits[action === "kick" ? "KickMembers" : "ModerateMembers"])) return "Je n’ai pas la permission Discord nécessaire pour faire ça.";
+  if (target.roles.highest.comparePositionTo(botMember.roles.highest) >= 0) return "Je ne peux pas agir sur ce membre : son rôle est égal ou supérieur au mien.";
+
+  let durationMs = 10 * 60 * 1000;
+  if (timeoutMatch?.[2]) {
+    const value = Number(timeoutMatch[2]);
+    const unit = String(timeoutMatch[3] || "minutes").toLowerCase();
+    const multiplier = /^(s|sec|seconde)/.test(unit) ? 1000 : /^(h|heure)/.test(unit) ? 3600000 : 60000;
+    durationMs = Math.min(28 * 24 * 60 * 60 * 1000, Math.max(1000, value * multiplier));
+  }
+  pendingVoiceActions.set(pendingKey, {
+    requesterId: userId,
+    targetId: target.id,
+    action,
+    permission,
+    botPermission: permission,
+    durationMs,
+    expiresAt: Date.now() + 20000,
+  });
+  const actionDescription = action === "kick"
+    ? "expulser " + (target.displayName || target.user.username) + " du serveur"
+    : "mettre " + (target.displayName || target.user.username) + " en pause pendant " + Math.round(durationMs / 60000) + " minutes";
+  return "Je vais " + actionDescription + ". Dis « ChatIA, confirme » dans les 20 secondes pour confirmer, ou « ChatIA, annule » pour annuler.";
 }
 
 async function generateReply(session, userId, transcript, decision = null) {
