@@ -97,6 +97,7 @@ const DUPLICATE_TRANSCRIPT_WINDOW_MS = parseEnvInt(
 const MIN_TRANSCRIPT_CHARS = parseEnvInt(process.env.MIN_TRANSCRIPT_CHARS, 3);
 const REPLY_ONLY_WHEN_ADDRESSED = parseEnvBool(process.env.REPLY_ONLY_WHEN_ADDRESSED, true);
 const MIN_UNADDRESSED_WORDS = parseEnvInt(process.env.MIN_UNADDRESSED_WORDS, 5);
+const BOT_FOLLOW_UP_WINDOW_MS = parseEnvInt(process.env.BOT_FOLLOW_UP_WINDOW_MS, 90000);
 const GEMINI_REQUEST_TIMEOUT_MS = parseEnvInt(process.env.GEMINI_REQUEST_TIMEOUT_MS, 12000);
 const MIN_TRANSCRIPT_WORDS = parseEnvInt(process.env.MIN_TRANSCRIPT_WORDS, 2);
 const CHAT_MAX_TOKENS = parseEnvInt(process.env.CHAT_MAX_TOKENS, 220);
@@ -551,10 +552,19 @@ async function shouldIgnoreTranscript(session, userId, transcript) {
   const canonical = canonicalizeTranscript(clean);
   const hasExplicitWakeWord = hasExplicitBotWakeWord(clean);
   const hasAddressingClue = looksDirectedAtBot(clean);
-  const recentBotConversation = now - memory.lastReplyAt < 30000;
+  const voiceChannel = client.channels.cache.get(session.voiceChannelId);
+  const humanCount = getHumanVoiceMemberCount(voiceChannel);
+  const aloneWithBot = humanCount === 1;
+  const recentBotConversation = now - memory.lastReplyAt < BOT_FOLLOW_UP_WINDOW_MS;
   let directedAtBot = hasExplicitWakeWord;
 
-  if (!hasExplicitWakeWord && (hasAddressingClue || recentBotConversation)) {
+  if (!hasExplicitWakeWord && aloneWithBot) {
+    directedAtBot = true;
+    log(`[${session.guildId}] Accepting voice transcript because only one human is in the voice channel.`);
+  } else if (!hasExplicitWakeWord && recentBotConversation) {
+    directedAtBot = true;
+    log(`[${session.guildId}] Accepting transcript as a follow-up to the bot's recent reply.`);
+  } else if (!hasExplicitWakeWord && hasAddressingClue) {
     directedAtBot = await classifyWhetherAddressedToBot(memory, clean, hasAddressingClue);
   }
 
