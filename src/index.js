@@ -853,7 +853,6 @@ function createSession(guildId, connection, textChannelId, voiceChannelId) {
     player,
     activeCaptures: new Set(),
     processingQueue: Promise.resolve(),
-    processingBusy: false,
     botSpeaking: false,
     memory,
     destroyed: false,
@@ -915,7 +914,6 @@ function createSession(guildId, connection, textChannelId, voiceChannelId) {
     log(`[${guildId}] Détection audio: début de parole utilisateur ${userId}`);
     if (session.destroyed) return;
     if (session.activeCaptures.has(userId)) return;
-    if (session.processingBusy) return;
     if (session.botSpeaking) return;
     if (Date.now() - session.memory.lastBotSpeechEndedAt < BOT_ECHO_GUARD_MS) return;
 
@@ -1040,16 +1038,9 @@ async function captureUtterance(session, userId) {
       return;
     }
 
-    if (session.processingBusy) {
-      log(`[${session.guildId}] Capture ignorée pour éviter une file d’attente de réponses vocales.`);
-      await safeUnlink(filePath);
-      return;
-    }
-
-    log(`[${session.guildId}] Audio capturé (${pcmBytes} octets); lancement de la transcription.`);
-    session.processingBusy = true;
-    try {
-      await enqueueSessionWork(session, async () => {
+    log(`[${session.guildId}] Audio capturé (${pcmBytes} octets); ajout à la file de transcription.`);
+    await enqueueSessionWork(session, async () => {
+      try {
         const transcript = await transcribeAudio(filePath);
         if (!transcript) return;
 
@@ -1063,10 +1054,10 @@ async function captureUtterance(session, userId) {
         if (!reply) return;
 
         await speakReply(session, reply);
-      });
-    } finally {
-      session.processingBusy = false;
-    }
+      } finally {
+        await safeUnlink(filePath);
+      }
+    });
   } catch (error) {
     if (!String(error?.message || error).includes("compressed data passed is corrupted")) log(`[${session.guildId}] Échec de capture audio`, error);
     await safeUnlink(filePath);
