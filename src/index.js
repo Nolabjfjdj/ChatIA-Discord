@@ -674,7 +674,7 @@ async function shouldIgnoreTranscript(session, userId, transcript) {
   const canonical = canonicalizeTranscript(clean);
   const voiceChannel = client.channels.cache.get(session.voiceChannelId);
   const hasExplicitWakeWord = hasExplicitBotWakeWord(clean);
-  const looksLikeVoiceActionTranscript = /^(?:(?:peux[- ]tu\s+)?(?:expulse|expulser|kick|vire|virer|déconnecte|deconnecte|déconnecter|deconnecter|déco|deco|sors|sortir|déplace|deplace|déplacer|deplacer|bouge|transfère|transfere|passe[- ]moi|passe moi|mute|muter|timeout|mettre en pause|réduire au silence)\b)/i.test(clean.replace(/^[«"']+/, "").trim());
+  const looksLikeVoiceActionTranscript = /^(?:(?:peux[- ]tu\s+)?(?:expulse|expulser|kick|vire|virer|déconnect(?:e|er)?|deconnect(?:e|er)?|déco|deco|sors|sortir|déplace|deplace|déplacer|deplacer|bouge|transfère|transfere|passe[- ]moi|passe moi|mute|muter|timeout|mettre en pause|réduire au silence)\b)/i.test(clean.replace(/^[«"']+/, "").trim());
   if (!hasExplicitWakeWord && !looksLikeVoiceActionTranscript && transcriptMentionsAnotherVoiceMember(voiceChannel, userId, clean)) {
     return { ignore: true, reason: "not-addressed-to-bot" };
   }
@@ -1438,7 +1438,7 @@ async function handleVoiceServerCommand(session, userId, transcript) {
   const hasWakeWord = hasExplicitBotWakeWord(transcript);
   const rawCommand = hasWakeWord ? stripBotWakeWord(transcript) : normalizeTranscriptText(transcript);
   const commandText = rawCommand.replace(/^[«"']+|[»"']+$/g, "").replace(/[.!?]+$/g, "").trim();
-  const looksLikeVoiceAction = /^(?:(?:peux[- ]tu\s+)?(?:expulse|expulser|kick|vire|virer|déconnecte|deconnecte|déconnecter|deconnecter|déco|deco|sors|sortir|déplace|deplace|déplacer|deplacer|bouge|transfère|transfere|passe[- ]moi|passe moi|mute|muter|timeout|mettre en pause|réduire au silence)\b)/i.test(commandText);
+  const looksLikeVoiceAction = /^(?:(?:peux[- ]tu\s+)?(?:expulse|expulser|kick|vire|virer|déconnect(?:e|er)?|deconnect(?:e|er)?|déco|deco|sors|sortir|déplace|deplace|déplacer|deplacer|bouge|transfère|transfere|passe[- ]moi|passe moi|mute|muter|timeout|mettre en pause|réduire au silence)\b)/i.test(commandText);
   if (!hasWakeWord && !looksLikeVoiceAction) return null;
   const pendingKey = guild.id;
   let pending = pendingVoiceActions.get(pendingKey);
@@ -1491,7 +1491,7 @@ async function handleVoiceServerCommand(session, userId, transcript) {
   }
 
   const kickMatch = commandText.match(/^(?:peux[- ]tu\s+)?(?:expulse|expulser|kick|vire|virer)\s+(.+)$/i);
-  const disconnectMatch = commandText.match(/^(?:peux[- ]tu\s+)?(?:déconnecte|deconnecte|déconnecter|deconnecter|déco|deco|sors|sortir)\s+(.+?)(?:\s+(?:du|des)\s+(?:salon|salons)\s+voc(?:al|ale|aux))?$/i);
+  const disconnectMatch = commandText.match(/^(?:peux[- ]tu\s+)?(?:déconnect(?:e|er)?|deconnect(?:e|er)?|déco|deco|sors|sortir)\s+(.+?)(?:\s+(?:du|des)\s+(?:salon|salons)\s+voc(?:al|ale|aux))?$/i);
   const moveMatch = commandText.match(/^(?:peux[- ]tu\s+)?(?:déplace|deplace|déplacer|deplacer|bouge|transfère|transfere|passe[- ]moi|passe moi)(?:\s+(.+?))?\s+(?:dans|vers|au|à)\s+(?:le\s+)?(?:salon\s+)?(.+)$/i);
   const timeoutMatch = commandText.match(/^(?:peux[- ]tu\s+)?(?:mute|muter|timeout|mettre en pause|réduire au silence)\s+(.+?)(?:\s+(?:pendant|pour)\s+(\d+)\s*(s|sec|secondes?|m|min|minutes?|h|heures?))?$/i);
   if (disconnectMatch && /^(?:moi|me|moi-même|moi meme)$/i.test(disconnectMatch[1].trim())) {
