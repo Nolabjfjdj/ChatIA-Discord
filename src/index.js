@@ -674,7 +674,8 @@ async function shouldIgnoreTranscript(session, userId, transcript) {
   const canonical = canonicalizeTranscript(clean);
   const voiceChannel = client.channels.cache.get(session.voiceChannelId);
   const hasExplicitWakeWord = hasExplicitBotWakeWord(clean);
-  if (!hasExplicitWakeWord && transcriptMentionsAnotherVoiceMember(voiceChannel, userId, clean)) {
+  const looksLikeVoiceActionTranscript = /^(?:(?:peux[- ]tu\s+)?(?:expulse|expulser|kick|vire|virer|déconnecte|deconnecte|déconnecter|deconnecter|déco|deco|sors|sortir|déplace|deplace|déplacer|deplacer|bouge|transfère|transfere|passe[- ]moi|passe moi|mute|muter|timeout|mettre en pause|réduire au silence)\b)/i.test(clean.replace(/^[«"']+/, "").trim());
+  if (!hasExplicitWakeWord && !looksLikeVoiceActionTranscript && transcriptMentionsAnotherVoiceMember(voiceChannel, userId, clean)) {
     return { ignore: true, reason: "not-addressed-to-bot" };
   }
   const hasAddressingClue = looksDirectedAtBot(clean);
@@ -682,7 +683,7 @@ async function shouldIgnoreTranscript(session, userId, transcript) {
   const recentConversationWithThisUser = now - lastReplyToThisUser < BOT_FOLLOW_UP_WINDOW_MS;
   const followUpText = canonical.normalize("NFD").replace(/\p{Diacritic}/gu, "");
   const shortFollowUp = /^(oui|non|ouais|nan|d accord|daccord|ok|okay|vas y|continue|pourquoi|comment ca|repete|redis|encore|exactement|c est ca|merci)$/i.test(followUpText);
-  let directedAtBot = hasExplicitWakeWord;
+  let directedAtBot = hasExplicitWakeWord || looksLikeVoiceActionTranscript;
 
   if (!hasExplicitWakeWord && recentConversationWithThisUser && (shortFollowUp || hasAddressingClue)) {
     directedAtBot = true;
