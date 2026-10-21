@@ -44,7 +44,6 @@ for (const key of REQUIRED_ENV) {
   }
 }
 
-const PREFIX = process.env.BOT_PREFIX || "!";
 const BOT_LANGUAGE = "fr";
 const GROQ_BASE_URL = process.env.GROQ_BASE_URL || "https://api.groq.com/openai/v1";
 const GROQ_CHAT_MODEL = process.env.GROQ_CHAT_MODEL || "llama-3.1-8b-instant";
@@ -1890,7 +1889,6 @@ client.once("ready", async () => {
   await ensureRecordingsDir();
   try { await registerSlashCommands(); } catch (error) { log("Échec de l’enregistrement des commandes slash", error); }
   log(`Bot online als ${client.user.tag}`);
-  log(`Prefix: ${PREFIX}`);
   log(
     `LLM Provider: ${LLM_PROVIDER}${
       LLM_PROVIDER === "groq"
@@ -1943,136 +1941,6 @@ client.on("voiceStateUpdate", (oldState, newState) => {
   if (member?.user?.bot) return;
 
   enqueueAutoJoinReconcile(guild, "voice-state-update");
-});
-
-client.on("messageCreate", async (message) => {
-  if (message.author.bot) return;
-  if (!message.guild) return;
-  if (!message.content.startsWith(PREFIX)) return;
-
-  const [rawCommand, ...rest] = message.content.slice(PREFIX.length).trim().split(/\s+/);
-  const command = (rawCommand || "").toLowerCase();
-  const argText = rest.join(" ").trim();
-
-  try {
-    if (["logs", "dialoguelogs"].includes(command)) {
-      if (!message.member.permissions.has(PermissionFlagsBits.ManageGuild)) { await message.reply("Il faut la permission **Gérer le serveur** pour modifier ces réglages."); return; }
-      const settings = getDialogueLogSettings(message.guild.id);
-      const action = (rest[0] || "").toLowerCase();
-      if (action === "on") { settings.enabled = true; await message.reply("Affichage des dialogues réactivé."); }
-      else if (action === "off") { settings.enabled = false; await message.reply("Affichage des dialogues désactivé."); }
-      else if (action === "salon" || action === "channel") {
-        const channelId = rest[1]?.replace(/[<#>]/g, "");
-        const channel = channelId ? message.guild.channels.cache.get(channelId) : null;
-        if (!channel || !channel.isTextBased()) { await message.reply("Utilise `" + PREFIX + "logs salon #nom-du-salon` ou `" + PREFIX + "logs salon ID_DU_SALON`."); return; }
-        settings.channelId = channel.id; await message.reply("Les dialogues seront envoyés dans " + channel.toString() + ".");
-      } else if (action === "reset") { settings.channelId = null; await message.reply("Le salon des dialogues revient au salon texte par défaut."); }
-      else { await message.reply(["**Réglages des dialogues**", "`" + PREFIX + "logs on` - Afficher les dialogues", "`" + PREFIX + "logs off` - Masquer les dialogues", "`" + PREFIX + "logs salon #salon` - Choisir le salon de logs", "`" + PREFIX + "logs reset` - Revenir au salon par défaut", "État : " + (settings.enabled ? "activé" : "désactivé"), "Salon : " + (settings.channelId ? "<#" + settings.channelId + ">" : "par défaut")].join("\n")); }
-      return;
-    }
-
-    if (["autoreconnect", "autorejoin", "autojoin"].includes(command)) {
-      if (!message.member.permissions.has(PermissionFlagsBits.ManageGuild)) { await message.reply("Il faut la permission **Gérer le serveur** pour modifier ce réglage."); return; }
-      const action = (rest[0] || "").toLowerCase();
-      if (action === "on") { autoJoinOverrides.set(message.guild.id, true); await message.reply("Reconnexion automatique activée."); }
-      else if (action === "off") { autoJoinOverrides.set(message.guild.id, false); await message.reply("Reconnexion automatique désactivée."); }
-      else { await message.reply("Utilise `" + PREFIX + "autoreconnect on` ou `" + PREFIX + "autoreconnect off`. État actuel : " + (isAutoJoinEnabled(message.guild.id) ? "activée" : "désactivée") + "."); }
-      return;
-    }
-    if (command === "join") {
-      await joinForMessage(message);
-      return;
-    }
-
-    if (command === "testchannels") {
-      await message.reply("Je teste les salons vocaux du serveur...");
-      const voiceChannels = message.guild.channels.cache.filter(c => c.isVoiceBased());
-      let success = false;
-      
-      for (const [id, vc] of voiceChannels) {
-        await message.channel.send(`Test de connexion à **${vc.name}**...`);
-        const connection = joinVoiceChannel({
-          channelId: vc.id,
-          guildId: message.guild.id,
-          adapterCreator: message.guild.voiceAdapterCreator,
-          selfDeaf: false,
-          selfMute: false,
-          debug: true,
-        });
-
-        try {
-          await entersState(connection, VoiceConnectionStatus.Ready, 15_000);
-          await message.channel.send(`✅ Connexion réussie à **${vc.name}** ! L’audio fonctionne.`);
-          
-          const session = createSession(message.guild.id, connection, message.channel.id, vc.id);
-          sessions.set(message.guild.id, session);
-          success = true;
-          break; // Stop testing if we found a working channel
-        } catch (error) {
-          connection.destroy();
-          await message.channel.send(`❌ Échec de connexion à **${vc.name}** après 15 secondes (délai UDP dépassé).`);
-        }
-      }
-      
-      if (!success) {
-        await message.channel.send("J’ai testé tous les salons, mais aucune connexion audio n’a pu être établie.");
-      }
-      return;
-    }
-
-    if (command === "leave") {
-      if (isAutoJoinEnabled(message.guild.id)) {
-        setAutoJoinCooldown(message.guild.id, AUTO_JOIN_MANUAL_LEAVE_COOLDOWN_MS);
-      }
-      await destroySession(message.guild.id);
-      await message.reply(
-        isAutoJoinEnabled(message.guild.id)
-          ? `Salon vocal quitté. Reconnexion automatique suspendue pendant ${Math.round(
-              AUTO_JOIN_MANUAL_LEAVE_COOLDOWN_MS / 1000,
-            )} s.`
-          : "Salon vocal quitté.",
-      );
-      return;
-    }
-
-    if (command === "chat") {
-      await handleTextChatCommand({
-        guild: message.guild,
-        channel: message.channel,
-        author: message.author,
-        text: argText,
-        respond: content => message.reply(content),
-      });
-      return;
-    }
-
-    if (command === "say") {
-      await handleSayCommand(message, argText);
-      return;
-    }
-
-    if (command === "help") {
-      await message.reply(
-        [
-          `**Commandes (${PREFIX})**`,
-          `${PREFIX}join - Rejoindre le salon vocal et écouter`,
-          `${PREFIX}leave - Quitter le salon vocal`,
-          `${PREFIX}say <texte> - Tester la réponse vocale`,
-          `${PREFIX}chat <message> - Discuter par écrit, avec réponse vocale si je suis connecté en vocal`,
-          `${PREFIX}logs on/off - Activer ou masquer les dialogues en texte`,
-          `${PREFIX}logs salon #salon - Choisir le salon de logs`,
-          `${PREFIX}autoreconnect on/off - Activer ou désactiver la reconnexion automatique`,
-          `Rejoindre automatiquement : ${isAutoJoinEnabled(message.guild.id) ? "activé" : "désactivé"}`,
-          `${PREFIX}help - Afficher l’aide`,
-          "Commandes slash : /join, /leave, /say, /chat, /logs, /autoreconnect, /help",
-        ].join("\n"),
-      );
-      return;
-    }
-  } catch (error) {
-    log("Command error", error);
-    await message.reply("Une erreur est survenue pendant l’exécution de la commande.");
-  }
 });
 
 client.on("error", (error) => {
