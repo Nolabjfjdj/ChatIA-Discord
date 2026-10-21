@@ -1432,8 +1432,9 @@ async function findVoiceCommandTarget(guild, targetText) {
 
 async function handleVoiceServerCommand(session, userId, transcript) {
   const guild = client.guilds.cache.get(session.guildId);
-  const member = guild?.members.cache.get(userId);
-  if (!guild || !member) return null;
+  if (!guild) return null;
+  const member = guild.members.cache.get(userId) || await guild.members.fetch(userId).catch(() => null);
+  if (!member) return null;
   const hasWakeWord = hasExplicitBotWakeWord(transcript);
   const rawCommand = hasWakeWord ? stripBotWakeWord(transcript) : normalizeTranscriptText(transcript);
   const commandText = rawCommand.replace(/^[«"']+|[»"']+$/g, "").replace(/[.!?]+$/g, "").trim();
@@ -1929,6 +1930,17 @@ async function handleTextChatCommand({ guild, channel, author, text, respond }) 
   }
   const session = sessions.get(guild.id) || null;
   try {
+    const commandSession = session || { guildId: guild.id };
+    const moderationReply = await handleVoiceServerCommand(commandSession, author.id, cleanText);
+    if (moderationReply) {
+      await respond(moderationReply);
+      if (session) {
+        void enqueueSessionWork(session, async () => {
+          await speakReply(session, moderationReply);
+        });
+      }
+      return;
+    }
     const result = await generateTextChatReply(guild, channel, author, cleanText, session);
     await respond(result.reply);
     if (result.session) {
