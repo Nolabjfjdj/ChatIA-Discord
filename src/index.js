@@ -76,7 +76,9 @@ const ELEVENLABS_USE_SPEAKER_BOOST =
 const TTS_PROVIDER = (
   process.env.TTS_PROVIDER || (ELEVENLABS_API_KEY ? "elevenlabs" : "google")
 ).toLowerCase();
-const AUTO_JOIN_VOICE_CHANNELS = parseEnvBool(process.env.AUTO_JOIN_VOICE_CHANNELS, true);
+const AUTO_JOIN_VOICE_CHANNELS_DEFAULT = parseEnvBool(process.env.AUTO_JOIN_VOICE_CHANNELS_DEFAULT, true);
+const autoJoinOverrides = new Map();
+const dialogueLogSettings = new Map();
 const AUTO_JOIN_MANUAL_LEAVE_COOLDOWN_MS = Number.parseInt(
   process.env.AUTO_JOIN_MANUAL_LEAVE_COOLDOWN_MS || "60000",
   10,
@@ -151,6 +153,24 @@ const autoJoinCooldowns = new Map();
 const autoJoinReconcileQueues = new Map();
 /** @type {Map<string, any>} */
 const channelMemories = new Map();
+
+function isAutoJoinEnabled(guildId) {
+  return autoJoinOverrides.has(guildId) ? autoJoinOverrides.get(guildId) : AUTO_JOIN_VOICE_CHANNELS_DEFAULT;
+}
+
+function getDialogueLogSettings(guildId) {
+  if (!dialogueLogSettings.has(guildId)) dialogueLogSettings.set(guildId, { enabled: true, channelId: null });
+  return dialogueLogSettings.get(guildId);
+}
+
+async function sendDialogueLog(session, content) {
+  const settings = getDialogueLogSettings(session.guildId);
+  if (!settings.enabled) return;
+  const channel = client.channels.cache.get(settings.channelId || session.textChannelId);
+  if (!channel || !channel.isTextBased()) return;
+  try { await channel.send(content); }
+  catch (error) { log("[" + session.guildId + "] Impossible d’envoyer le dialogue dans le salon de logs", error?.message || error); }
+}
 
 function log(...args) {
   console.log(new Date().toISOString(), ...args);
@@ -669,7 +689,7 @@ function enqueueAutoJoinReconcile(guild, reason) {
 }
 
 async function reconcileAutoJoinForGuild(guild, reason) {
-  if (!AUTO_JOIN_VOICE_CHANNELS) return;
+  if (!isAutoJoinEnabled(guild.id)) return;
 
   const currentSession = sessions.get(guild.id);
   if (currentSession) {
@@ -1169,7 +1189,7 @@ async function generateReply(session, userId, transcript, decision = null) {
 
       const textChannel = client.channels.cache.get(session.textChannelId);
       if (textChannel && textChannel.isTextBased()) {
-        void textChannel.send(`**${username}:** ${transcript}\n**Bot:** ${hardReply}`);
+        void sendDialogueLog(session, `**${username}:** ${transcript}\n**Bot:** ${hardReply}`);
       }
 
       return hardReply;
@@ -1194,7 +1214,7 @@ async function generateReply(session, userId, transcript, decision = null) {
 
       const textChannel = client.channels.cache.get(session.textChannelId);
       if (textChannel && textChannel.isTextBased()) {
-        void textChannel.send(`**${username}:** ${transcript}\n**Bot:** ${fallbackReply}`);
+        void sendDialogueLog(session, `**${username}:** ${transcript}\n**Bot:** ${fallbackReply}`);
       }
 
       return fallbackReply;
@@ -1225,7 +1245,7 @@ async function generateReply(session, userId, transcript, decision = null) {
 
     const textChannel = client.channels.cache.get(session.textChannelId);
     if (textChannel && textChannel.isTextBased()) {
-      void textChannel.send(`**${username}:** ${transcript}\n**Bot:** ${memoryReply}`);
+      void sendDialogueLog(session, `**${username}:** ${transcript}\n**Bot:** ${memoryReply}`);
     }
 
     return clippedReply;
@@ -1493,10 +1513,10 @@ client.once("ready", async () => {
   );
   log(`Memory: messages=${MEMORY_MAX_MESSAGES}, chars=${MEMORY_MAX_CHARS}, TTS max chars=${MAX_TTS_CHARS}`);
   log(
-    `Auto-Join Voice: ${AUTO_JOIN_VOICE_CHANNELS ? "aktiv" : "deaktiviert"} (leave cooldown=${AUTO_JOIN_MANUAL_LEAVE_COOLDOWN_MS}ms)`,
+    `Auto-Join Voice: ${isAutoJoinEnabled(guild.id) ? "aktiv" : "deaktiviert"} (leave cooldown=${AUTO_JOIN_MANUAL_LEAVE_COOLDOWN_MS}ms)`,
   );
 
-  if (AUTO_JOIN_VOICE_CHANNELS) {
+  if (isAutoJoinEnabled(guild.id)) {
     for (const guild of client.guilds.cache.values()) {
       enqueueAutoJoinReconcile(guild, "startup");
     }
@@ -1519,7 +1539,7 @@ client.once("ready", async () => {
 });
 
 client.on("voiceStateUpdate", (oldState, newState) => {
-  if (!AUTO_JOIN_VOICE_CHANNELS) return;
+  if (!AUTO_JOIN_VOICE_CHANNELS_DEFAULT) return;
 
   const guild = newState.guild || oldState.guild;
   if (!guild) return;
@@ -1540,6 +1560,30 @@ client.on("messageCreate", async (message) => {
   const argText = rest.join(" ").trim();
 
   try {
+    if (["logs", "dialoguelogs"].includes(command)) {
+      if (!message.member.permissions.has(PermissionFlagsBits.ManageGuild)) { await message.reply("Il faut la permission **Gérer le serveur** pour modifier ces réglages."); return; }
+      const settings = getDialogueLogSettings(message.guild.id);
+      const action = (rest[0] || "").toLowerCase();
+      if (action === "on") { settings.enabled = true; await message.reply("Affichage des dialogues réactivé."); }
+      else if (action === "off") { settings.enabled = false; await message.reply("Affichage des dialogues désactivé."); }
+      else if (action === "salon" || action === "channel") {
+        const channelId = rest[1]?.replace(/[<#>]/g, "");
+        const channel = channelId ? message.guild.channels.cache.get(channelId) : null;
+        if (!channel || !channel.isTextBased()) { await message.reply("Utilise `" + PREFIX + "logs salon #nom-du-salon` ou `" + PREFIX + "logs salon ID_DU_SALON`."); return; }
+        settings.channelId = channel.id; await message.reply("Les dialogues seront envoyés dans " + channel.toString() + ".");
+      } else if (action === "reset") { settings.channelId = null; await message.reply("Le salon des dialogues revient au salon texte par défaut."); }
+      else { await message.reply(["**Réglages des dialogues**", "`" + PREFIX + "logs on` - Afficher les dialogues", "`" + PREFIX + "logs off` - Masquer les dialogues", "`" + PREFIX + "logs salon #salon` - Choisir le salon de logs", "`" + PREFIX + "logs reset` - Revenir au salon par défaut", "État : " + (settings.enabled ? "activé" : "désactivé"), "Salon : " + (settings.channelId ? "<#" + settings.channelId + ">" : "par défaut")].join("\n")); }
+      return;
+    }
+
+    if (["autoreconnect", "autorejoin", "autojoin"].includes(command)) {
+      if (!message.member.permissions.has(PermissionFlagsBits.ManageGuild)) { await message.reply("Il faut la permission **Gérer le serveur** pour modifier ce réglage."); return; }
+      const action = (rest[0] || "").toLowerCase();
+      if (action === "on") { autoJoinOverrides.set(message.guild.id, true); await message.reply("Reconnexion automatique activée."); }
+      else if (action === "off") { autoJoinOverrides.set(message.guild.id, false); await message.reply("Reconnexion automatique désactivée."); }
+      else { await message.reply("Utilise `" + PREFIX + "autoreconnect on` ou `" + PREFIX + "autoreconnect off`. État actuel : " + (isAutoJoinEnabled(message.guild.id) ? "activée" : "désactivée") + "."); }
+      return;
+    }
     if (command === "join") {
       await joinForMessage(message);
       return;
@@ -1582,12 +1626,12 @@ client.on("messageCreate", async (message) => {
     }
 
     if (command === "leave") {
-      if (AUTO_JOIN_VOICE_CHANNELS) {
+      if (AUTO_JOIN_VOICE_CHANNELS_DEFAULT) {
         setAutoJoinCooldown(message.guild.id, AUTO_JOIN_MANUAL_LEAVE_COOLDOWN_MS);
       }
       await destroySession(message.guild.id);
       await message.reply(
-        AUTO_JOIN_VOICE_CHANNELS
+        AUTO_JOIN_VOICE_CHANNELS_DEFAULT
           ? `Salon vocal quitté. Reconnexion automatique suspendue pendant ${Math.round(
               AUTO_JOIN_MANUAL_LEAVE_COOLDOWN_MS / 1000,
             )} s.`
@@ -1608,7 +1652,10 @@ client.on("messageCreate", async (message) => {
           `${PREFIX}join - Rejoindre le salon vocal et écouter`,
           `${PREFIX}leave - Quitter le salon vocal`,
           `${PREFIX}say <texte> - Tester la réponse vocale`,
-          `Rejoindre automatiquement : ${AUTO_JOIN_VOICE_CHANNELS ? "activé" : "désactivé"}`,
+          `${PREFIX}logs on/off - Activer ou masquer les dialogues en texte`,
+          `${PREFIX}logs salon #salon - Choisir le salon de logs`,
+          `${PREFIX}autoreconnect on/off - Activer ou désactiver la reconnexion automatique`,
+          `Rejoindre automatiquement : ${isAutoJoinEnabled(message.guild.id) ? "activé" : "désactivé"}`,
           `${PREFIX}help - Afficher l’aide`,
         ].join("\n"),
       );
