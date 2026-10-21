@@ -115,7 +115,7 @@ const CHAT_MAX_TOKENS = parseEnvInt(process.env.CHAT_MAX_TOKENS, 450);
 const MAX_TTS_CHARS = parseEnvInt(process.env.MAX_TTS_CHARS, 1200);
 const MEMORY_MAX_MESSAGES = parseEnvInt(process.env.MEMORY_MAX_MESSAGES, 24);
 const MEMORY_MAX_CHARS = parseEnvInt(process.env.MEMORY_MAX_CHARS, 7000);
-const BOT_WAKE_WORDS = parseCsvEnv(process.env.BOT_WAKE_WORDS, ["bot", "discord bot", "chatia", "chat ia", "chatgpt", "chat gpt", "tchatgpt", "tchat gpt", "tchatteia", "tchatte ia", "tchatia", "tchat ia", "tchat ia", "chat y a", "chati a"]);
+const BOT_WAKE_WORDS = parseCsvEnv(process.env.BOT_WAKE_WORDS, ["discord bot", "chatia", "chat ia", "chatgpt", "chat gpt", "tchatgpt", "tchat gpt", "tchatteia", "tchatte ia", "tchatia", "tchat ia", "chat y a", "chati a"]).filter((wakeWord) => canonicalizeWakeWord(wakeWord) !== "bot");
 const IGNORE_COURTESY_ONLY = parseEnvBool(process.env.IGNORE_COURTESY_ONLY, true);
 const TTS_ERROR_NOTIFY_COOLDOWN_MS = parseEnvInt(process.env.TTS_ERROR_NOTIFY_COOLDOWN_MS, 60000);
 const MIN_PCM_BYTES = parseEnvInt(process.env.MIN_PCM_BYTES, 120_000);
@@ -469,6 +469,34 @@ function buildHardCapabilityReply(transcript) {
   return null;
 }
 
+function canonicalizeWakeWord(text) {
+  return normalizeTranscriptText(text)
+    .toLowerCase()
+    .replace(/[^a-z0-9à-ÿ]+/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function transcriptMentionsAnotherVoiceMember(voiceChannel, speakerUserId, transcript) {
+  if (!voiceChannel?.members?.size) return false;
+
+  const normalizedTranscript = " " + canonicalizeWakeWord(transcript).normalize("NFD").replace(/\p{Diacritic}/gu, "") + " ";
+  for (const member of voiceChannel.members.values()) {
+    if (member.user?.bot || member.id === speakerUserId) continue;
+
+    const names = [member.displayName, member.user?.globalName, member.user?.username]
+      .filter(Boolean)
+      .map((name) => canonicalizeWakeWord(name).normalize("NFD").replace(/\p{Diacritic}/gu, ""))
+      .filter((name) => name.length >= 3);
+
+    if (names.some((name) => normalizedTranscript.includes(" " + name + " "))) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
 function hasExplicitBotWakeWord(text) {
   const lower = normalizeTranscriptText(text).toLowerCase();
   if (!lower) return false;
@@ -614,9 +642,12 @@ async function shouldIgnoreTranscript(session, userId, transcript) {
   }
 
   const canonical = canonicalizeTranscript(clean);
+  const voiceChannel = client.channels.cache.get(session.voiceChannelId);
+  if (transcriptMentionsAnotherVoiceMember(voiceChannel, userId, clean)) {
+    return { ignore: true, reason: "not-addressed-to-bot" };
+  }
   const hasExplicitWakeWord = hasExplicitBotWakeWord(clean);
   const hasAddressingClue = looksDirectedAtBot(clean);
-  const voiceChannel = client.channels.cache.get(session.voiceChannelId);
   const humanCount = getHumanVoiceMemberCount(voiceChannel);
   const aloneWithBot = humanCount === 1;
   const lastReplyToThisUser = memory.lastReplyByUser.get(userId) || 0;
