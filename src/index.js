@@ -958,47 +958,70 @@ function buildVertexGenerateContentUrl() {
 }
 
 async function callGeminiGenerateContent(modelName, body) {
-  const base = GEMINI_BASE_URL.replace(/\\/+$/, "");
+  const base = GEMINI_BASE_URL.replace(/\/+$/, "");
+  const fallbackModels = parseCsvEnv(
+    process.env.GEMINI_FALLBACK_MODELS,
+    ["gemini-3.6-flash", "gemini-3.5-flash-lite"],
+  );
+  const models = [...new Set([modelName, ...fallbackModels].map((name) => String(name || "").trim()).filter(Boolean))];
   let lastError = null;
 
-  for (let index = 0; index < GEMINI_API_KEYS.length; index += 1) {
-    const url = new URL(base + "/models/" + encodeURIComponent(modelName) + ":generateContent");
-    url.searchParams.set("key", GEMINI_API_KEYS[index]);
+  for (let modelIndex = 0; modelIndex < models.length; modelIndex += 1) {
+    const currentModel = models[modelIndex];
+    let switchModel = false;
 
-    let response;
-    try {
-      response = await request(url.toString(), {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify(body),
-        headersTimeout: GEMINI_REQUEST_TIMEOUT_MS,
-        bodyTimeout: GEMINI_REQUEST_TIMEOUT_MS,
-      });
-    } catch (error) {
-      lastError = error;
-      log("Gemini key " + (index + 1) + "/" + GEMINI_API_KEYS.length + " request failed (" + (error && error.code ? error.code : error.message) + "); trying the next configured key.");
-      continue;
+    for (let keyIndex = 0; keyIndex < GEMINI_API_KEYS.length; keyIndex += 1) {
+      const url = new URL(base + "/models/" + encodeURIComponent(currentModel) + ":generateContent");
+      url.searchParams.set("key", GEMINI_API_KEYS[keyIndex]);
+
+      let response;
+      try {
+        response = await request(url.toString(), {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(body),
+          headersTimeout: GEMINI_REQUEST_TIMEOUT_MS,
+          bodyTimeout: GEMINI_REQUEST_TIMEOUT_MS,
+        });
+      } catch (error) {
+        lastError = error;
+        log("Gemini model " + currentModel + ", key " + (keyIndex + 1) + "/" + GEMINI_API_KEYS.length + " request failed (" + (error && error.code ? error.code : error.message) + "); trying the next configured key.");
+        continue;
+      }
+
+      if (response.statusCode < 400) {
+        if (currentModel !== modelName) {
+          log("Gemini fallback model succeeded: " + currentModel + ".");
+        }
+        return response.body.json();
+      }
+
+      let details = "";
+      try {
+        details = String(await response.body.text());
+      } catch {}
+
+      lastError = new Error("Gemini generateContent failed: model " + currentModel + ", HTTP " + response.statusCode + (details ? " - " + details : ""));
+
+      if (response.statusCode === 503 || response.statusCode === 502 || response.statusCode === 504) {
+        log("Gemini model " + currentModel + " returned HTTP " + response.statusCode + "; switching to the next fallback model.");
+        switchModel = true;
+        break;
+      }
+
+      if (![401, 403, 429, 500].includes(response.statusCode)) {
+        throw lastError;
+      }
+
+      log("Gemini model " + currentModel + ", key " + (keyIndex + 1) + "/" + GEMINI_API_KEYS.length + " failed with HTTP " + response.statusCode + "; trying the next configured key.");
     }
 
-    if (response.statusCode < 400) {
-      return response.body.json();
+    if (!switchModel && modelIndex < models.length - 1) {
+      log("Gemini model " + currentModel + " failed with the configured keys; trying fallback model " + models[modelIndex + 1] + ".");
     }
-
-    let details = "";
-    try {
-      details = String(await response.body.text());
-    } catch {}
-
-    lastError = new Error("Gemini generateContent failed: HTTP " + response.statusCode + (details ? " - " + details : ""));
-
-    if (![401, 403, 429, 500, 502, 503, 504].includes(response.statusCode)) {
-      throw lastError;
-    }
-
-    log("Gemini key " + (index + 1) + "/" + GEMINI_API_KEYS.length + " failed with HTTP " + response.statusCode + "; trying the next configured key.");
   }
 
-  throw lastError || new Error("Aucune clé Gemini disponible.");
+  throw lastError || new Error("Aucune clé ou aucun modèle Gemini disponible.");
 }
 async function generateChatCompletionTextWithGemini(messages) {
   const mapped = mapOpenAiMessagesToVertex(messages);
