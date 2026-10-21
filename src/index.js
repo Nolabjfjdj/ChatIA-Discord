@@ -1070,7 +1070,7 @@ const GEMINI_MODEL_COOLDOWN_MS = parseEnvInt(process.env.GEMINI_MODEL_COOLDOWN_M
 const geminiModelCooldowns = new Map();
 
 async function callGeminiGenerateContent(modelName, body) {
-  const base = GEMINI_BASE_URL.replace(/\\/+$/, "");
+  const base = GEMINI_BASE_URL.replace(/\/+$/, "");
   const fallbackModels = parseCsvEnv(
     process.env.GEMINI_FALLBACK_MODELS,
     ["gemini-3.6-flash", "gemini-3.5-flash-lite"],
