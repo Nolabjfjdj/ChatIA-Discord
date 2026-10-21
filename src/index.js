@@ -282,7 +282,7 @@ function getMemberVoiceChannel(message) {
   return message.member?.voice?.channel ?? null;
 }
 
-function buildSystemPrompt() {
+function buildSystemPrompt(serverContext = "") {
   return [
     "Tu es un assistant vocal Discord qui parle naturellement en français.",
     "Réponds toujours en français, sauf si la personne demande explicitement une traduction.",
@@ -291,9 +291,61 @@ function buildSystemPrompt() {
     "Si l’audio est incompréhensible, demande brièvement de répéter et n’invente aucun détail.",
     "Évite les phrases de remplissage, les présentations répétitives et les émojis.",
     "Ne répète pas les insultes ni les propos discriminatoires.",
+    "Tu peux répondre aux questions sur le serveur avec le contexte de serveur fourni ci-dessous, mais n’invente jamais une information absente.",
+    "RÈGLE DE CONFIDENTIALITÉ ABSOLUE : ne révèle jamais les journaux/logs, les salons réservés au staff, à la modération ou aux administrateurs, les tickets privés, ni aucun salon ou contenu inaccessible à un membre ordinaire. Ne confirme même pas le nom, l’existence ou le contenu d’un salon exclu. Si on te demande ces informations, explique simplement que tu ne peux pas divulguer les espaces privés ou les journaux.",
+    "Utilise uniquement les informations du contexte serveur explicitement marquées comme autorisées. Ne déduis pas le nom ou l’existence d’espaces privés à partir d’autres informations.",
     "Tu es un bot vocal Discord. Ne prétends pas effectuer des actions externes.",
     "Si une action n’est pas possible, explique-le brièvement et mentionne uniquement les commandes réelles (!join, !leave, !help).",
-  ].join(" ");
+    serverContext ? "Contexte autorisé du serveur :\n" + serverContext : "",
+  ].filter(Boolean).join(" ");
+}
+
+function isSensitiveChannelName(name) {
+  const normalized = String(name || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+  return /(^|[-_ ])(logs?|journal|audit|modlogs?|staff|moderation|moderateurs?|administration|admins?|tickets?|support-prive|private)([-_ ]|$)/i.test(normalized);
+}
+
+function buildSafeGuildContext(guild, member) {
+  if (!guild || !member) return "";
+  const visibleChannels = [];
+  const sensitiveCategoryIds = new Set();
+
+  for (const channel of guild.channels.cache.values()) {
+    if (channel.type === ChannelType.GuildCategory && isSensitiveChannelName(channel.name)) {
+      sensitiveCategoryIds.add(channel.id);
+    }
+  }
+
+  for (const channel of guild.channels.cache.values()) {
+    if (channel.type === ChannelType.GuildCategory) continue;
+    if (channel.parentId && sensitiveCategoryIds.has(channel.parentId)) continue;
+    if (isSensitiveChannelName(channel.name)) continue;
+    const permissions = channel.permissionsFor(member);
+    if (!permissions?.has(PermissionFlagsBits.ViewChannel)) continue;
+    if (channel.type === ChannelType.GuildText || channel.type === ChannelType.GuildAnnouncement) visibleChannels.push("#" + channel.name);
+    else if (channel.type === ChannelType.GuildVoice) visibleChannels.push("vocal: " + channel.name);
+    else if (channel.type === ChannelType.GuildStageVoice) visibleChannels.push("scène: " + channel.name);
+    else if (channel.type === ChannelType.GuildForum) visibleChannels.push("forum: " + channel.name);
+  }
+
+  const roles = [...guild.roles.cache.values()]
+    .filter((role) => role.id !== guild.id && !isSensitiveChannelName(role.name))
+    .map((role) => role.name)
+    .slice(0, 40);
+  const cachedMembers = [...guild.members.cache.values()]
+    .filter((entry) => !entry.user?.bot)
+    .map((entry) => entry.displayName || entry.user?.username)
+    .filter(Boolean)
+    .slice(0, 30);
+  const lines = [
+    "Nom du serveur : " + guild.name,
+    guild.description ? "Description : " + guild.description : "",
+    "Nombre de membres : " + guild.memberCount,
+    "Salons visibles par ce membre : " + (visibleChannels.slice(0, 80).join(", ") || "aucun salon autorisé disponible"),
+    "Rôles non sensibles : " + (roles.join(", ") || "aucun"),
+    "Membres non-bots actuellement en cache (liste partielle, maximum 30) : " + (cachedMembers.join(", ") || "aucun membre en cache"),
+  ].filter(Boolean);
+  return lines.join("\n").slice(0, 4500);
 }
 
 function normalizeTranscriptText(text) {
@@ -1334,9 +1386,10 @@ async function generateReply(session, userId, transcript, decision = null) {
       return fallbackReply;
     }
 
+    const serverContext = buildSafeGuildContext(guild, member);
     const userMessage = `${username} sagt im Sprachchat: ${transcript}`;
     const messages = [
-      { role: "system", content: buildSystemPrompt() },
+      { role: "system", content: buildSystemPrompt(serverContext) },
       ...memory.history,
       { role: "user", content: userMessage },
     ];
@@ -1606,9 +1659,10 @@ async function generateTextChatReply(guild, channel, author, text, session = nul
   const memory = session?.memory || getOrCreateChannelMemory(guild.id, "text-" + channel.id);
   const member = await guild.members.fetch(author.id).catch(() => null);
   const username = member?.displayName || author.globalName || author.username || "Utilisateur";
+  const serverContext = buildSafeGuildContext(guild, member);
   const userMessage = username + " écrit dans le salon texte : " + normalizeTranscriptText(text);
   const messages = [
-    { role: "system", content: buildSystemPrompt() },
+    { role: "system", content: buildSystemPrompt(serverContext) },
     ...memory.history,
     { role: "user", content: userMessage },
   ];
@@ -1898,101 +1952,3 @@ client.on("messageCreate", async (message) => {
           await message.channel.send(`❌ Échec de connexion à **${vc.name}** après 15 secondes (délai UDP dépassé).`);
         }
       }
-      
-      if (!success) {
-        await message.channel.send("J’ai testé tous les salons, mais aucune connexion audio n’a pu être établie.");
-      }
-      return;
-    }
-
-    if (command === "leave") {
-      if (isAutoJoinEnabled(message.guild.id)) {
-        setAutoJoinCooldown(message.guild.id, AUTO_JOIN_MANUAL_LEAVE_COOLDOWN_MS);
-      }
-      await destroySession(message.guild.id);
-      await message.reply(
-        isAutoJoinEnabled(message.guild.id)
-          ? `Salon vocal quitté. Reconnexion automatique suspendue pendant ${Math.round(
-              AUTO_JOIN_MANUAL_LEAVE_COOLDOWN_MS / 1000,
-            )} s.`
-          : "Salon vocal quitté.",
-      );
-      return;
-    }
-
-    if (command === "chat") {
-      await handleTextChatCommand({
-        guild: message.guild,
-        channel: message.channel,
-        author: message.author,
-        text: argText,
-        respond: content => message.reply(content),
-      });
-      return;
-    }
-
-    if (command === "say") {
-      await handleSayCommand(message, argText);
-      return;
-    }
-
-    if (command === "help") {
-      await message.reply(
-        [
-          `**Commandes (${PREFIX})**`,
-          `${PREFIX}join - Rejoindre le salon vocal et écouter`,
-          `${PREFIX}leave - Quitter le salon vocal`,
-          `${PREFIX}say <texte> - Tester la réponse vocale`,
-          `${PREFIX}chat <message> - Discuter par écrit, avec réponse vocale si je suis connecté en vocal`,
-          `${PREFIX}logs on/off - Activer ou masquer les dialogues en texte`,
-          `${PREFIX}logs salon #salon - Choisir le salon de logs`,
-          `${PREFIX}autoreconnect on/off - Activer ou désactiver la reconnexion automatique`,
-          `Rejoindre automatiquement : ${isAutoJoinEnabled(message.guild.id) ? "activé" : "désactivé"}`,
-          `${PREFIX}help - Afficher l’aide`,
-          "Commandes slash : /join, /leave, /say, /chat, /logs, /autoreconnect, /help",
-        ].join("\n"),
-      );
-      return;
-    }
-  } catch (error) {
-    log("Command error", error);
-    await message.reply("Une erreur est survenue pendant l’exécution de la commande.");
-  }
-});
-
-client.on("error", (error) => {
-  log("Discord client error", error);
-});
-
-process.on("SIGINT", async () => {
-  for (const guildId of [...sessions.keys()]) {
-    await destroySession(guildId);
-  }
-  client.destroy();
-  process.exit(0);
-});
-
-let discordLoginAttempt = 0;
-let discordLoginRetryTimer = null;
-
-async function loginToDiscord() {
-  if (discordLoginRetryTimer) {
-    clearTimeout(discordLoginRetryTimer);
-    discordLoginRetryTimer = null;
-  }
-
-  discordLoginAttempt += 1;
-  try {
-    await client.login(process.env.DISCORD_TOKEN);
-    discordLoginAttempt = 0;
-  } catch (error) {
-    const delay = Math.min(60_000, 5_000 * 2 ** Math.min(discordLoginAttempt - 1, 4));
-    log(`Discord login failed (attempt ${discordLoginAttempt}); retrying in ${Math.round(delay / 1000)}s.`, error);
-    discordLoginRetryTimer = setTimeout(() => {
-      void loginToDiscord();
-    }, delay);
-    discordLoginRetryTimer.unref?.();
-  }
-}
-
-void loginToDiscord();
