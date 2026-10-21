@@ -1662,7 +1662,7 @@ async function handleSlashCommand(interaction) {
         "/logs on, /logs off, /logs salon, /logs reset - Configurer les journaux (permission Gérer le serveur)",
         "/autoreconnect on ou /autoreconnect off - Configurer la reconnexion automatique (permission Gérer le serveur)",
         "/help - Afficher cette aide"
-      ].join("\\n"));
+      ].join("\n"));
     }
   } catch (error) {
     log("Slash command error", error);
