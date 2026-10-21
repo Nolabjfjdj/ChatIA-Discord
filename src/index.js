@@ -522,6 +522,8 @@ function hasExplicitBotWakeWord(text) {
     "chat ia",
     "chaia",
     "cha ia",
+    "tjadija",
+    "tja dija",
     "tchatia",
     "tchat ia",
     "tchattia",
@@ -1105,7 +1107,7 @@ async function transcribeAudio(filePath) {
             language: STT_LANGUAGE,
             temperature: 0,
           };
-          if (STT_LANGUAGE === "fr") payload.prompt = "Conversation vocale Discord en français. Transcris naturellement en français, sans traduire ni ajouter de commentaire.";
+          if (STT_LANGUAGE === "fr") payload.prompt = "Conversation vocale Discord entre amis, en français. Le nom du bot est ChatIA, prononcé « chat i a ». Il peut être prononcé ou reconnu comme Chat IA, TchatIA, Tchattia, Cha-IA, Tjadija ou « allô ». Garde exactement les mots réellement prononcés, surtout les noms propres et les appels au bot. Ne produis jamais de texte de sous-titrage, de crédit de sous-titrage, de commentaire ou de traduction. Si la parole est inaudible, retourne une transcription vide plutôt que d’inventer des mots.";
           if (STT_LANGUAGE === "de") payload.prompt = "Discord Voice Chat auf Deutsch. Transkribiere natürlich auf Deutsch, keine Übersetzung.";
           const result = await GROQ_TRANSCRIPTION_CLIENTS[index].audio.transcriptions.create(payload);
           text = result && result.text ? result.text : "";
