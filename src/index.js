@@ -1480,6 +1480,9 @@ async function handleVoiceServerCommand(session, userId, transcript) {
   const kickMatch = commandText.match(/^(?:peux[- ]tu\s+)?(?:expulse|expulser|kick|vire|virer)\s+(.+)$/i);
   const disconnectMatch = commandText.match(/^(?:peux[- ]tu\s+)?(?:déconnecte|deconnecte|déconnecter|deconnecter|déco|deco|sors|sortir)\s+(.+?)(?:\s+(?:du|des)\s+(?:salon|salons)\s+vocaux?)?$/i);
   const timeoutMatch = commandText.match(/^(?:peux[- ]tu\s+)?(?:mute|muter|timeout|mettre en pause|réduire au silence)\s+(.+?)(?:\s+(?:pendant|pour)\s+(\d+)\s*(s|sec|secondes?|m|min|minutes?|h|heures?))?$/i);
+  if (disconnectMatch && /^(?:le|la|lui|les|eux|elle|celui[- ]là|celle[- ]là|cette personne|cet utilisateur|ce membre)$/i.test(disconnectMatch[1].trim())) {
+    return "Qui veux-tu déconnecter ? Dis « ChatIA, déconnecte [nom] du salon vocal » pour que je cible la bonne personne.";
+  }
   const actionMatch = kickMatch || disconnectMatch || timeoutMatch;
   if (!actionMatch) return null;
 
