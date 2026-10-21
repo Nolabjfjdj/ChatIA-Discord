@@ -117,7 +117,7 @@ const MEMORY_MAX_CHARS = parseEnvInt(process.env.MEMORY_MAX_CHARS, 7000);
 const BOT_WAKE_WORDS = parseCsvEnv(process.env.BOT_WAKE_WORDS, ["discord bot", "chatia", "chat ia", "tchatteia", "tchatte ia", "tchatia", "tchat ia", "chat y a", "chati a"]).filter((wakeWord) => !["bot", "chatgpt", "chat gpt", "tchatgpt", "tchat gpt"].includes(canonicalizeWakeWord(wakeWord)));
 const IGNORE_COURTESY_ONLY = parseEnvBool(process.env.IGNORE_COURTESY_ONLY, true);
 const TTS_ERROR_NOTIFY_COOLDOWN_MS = parseEnvInt(process.env.TTS_ERROR_NOTIFY_COOLDOWN_MS, 60000);
-const MIN_PCM_BYTES = parseEnvInt(process.env.MIN_PCM_BYTES, 120_000);
+const MIN_PCM_BYTES = parseEnvInt(process.env.MIN_PCM_BYTES, 60_000);
 const RECORDINGS_DIR = path.join(process.cwd(), "tmp-recordings");
 const STT_LANGUAGE = normalizeSttLanguage(BOT_LANGUAGE);
 const GOOGLE_TTS_LANGUAGE = normalizeGoogleTtsLanguage(BOT_LANGUAGE);
@@ -543,7 +543,7 @@ function looksDirectedAtBot(text) {
   if (!lower) return false;
   if (hasExplicitBotWakeWord(text)) return true;
 
-  return /^(qui|quoi|que|qu’est-ce que|quest-ce que|comment|où|ou|quand|pourquoi|est-ce que|est ce que|c’est quoi|c'est quoi|c est quoi|ça veut dire quoi|ca veut dire quoi|tu peux|peux-tu|peux tu|tu peux me dire|tu peux expliquer|tu connais|tu sais|explique|explique-moi|explique moi|dis-moi|dis moi|tu pourrais|pourrais-tu|pourrais tu|wer|was|wie|wo|wann|warum|wieso|weshalb|kannst du|bitte|erklär|erklaer|sag mal)(\s|$)/i.test(lower);
+  return /^(?:tu peux(?: me dire| expliquer)?|peux-tu|peux tu|est-ce que tu|est ce que tu|tu pourrais|pourrais-tu|pourrais tu|tu sais|tu connais|explique(?:-moi| moi)?|dis(?:-moi| moi)|réponds|reponds|aide-moi|aide moi|tu peux m'aider|tu peux m aider|kannst du|sag mal)(?:\s|$)/i.test(lower);
 }
 async function classifyWhetherAddressedToBot(memory, transcript, hasAddressingClue) {
   const recentContext = memory.history
@@ -680,7 +680,8 @@ async function shouldIgnoreTranscript(session, userId, transcript) {
   const hasAddressingClue = looksDirectedAtBot(clean);
   const lastReplyToThisUser = memory.lastReplyByUser.get(userId) || 0;
   const recentConversationWithThisUser = now - lastReplyToThisUser < BOT_FOLLOW_UP_WINDOW_MS;
-  const shortFollowUp = /^(oui|non|ouais|nan|d accord|daccord|ok|okay|vas y|continue|pourquoi|comment ca|repete|redis|encore|exactement|c est ca|merci)$/i.test(canonical);
+  const followUpText = canonical.normalize("NFD").replace(/\p{Diacritic}/gu, "");
+  const shortFollowUp = /^(oui|non|ouais|nan|d accord|daccord|ok|okay|vas y|continue|pourquoi|comment ca|repete|redis|encore|exactement|c est ca|merci)$/i.test(followUpText);
   let directedAtBot = hasExplicitWakeWord;
 
   if (!hasExplicitWakeWord && recentConversationWithThisUser && (shortFollowUp || hasAddressingClue)) {
