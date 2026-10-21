@@ -1452,9 +1452,10 @@ async function handleVoiceServerCommand(session, userId, transcript) {
     const botMember = guild.members.me;
     if (!member.permissions.has(PermissionFlagsBits[pending.permission])) return "Tu n’as plus la permission nécessaire. Action annulée.";
     if (!botMember?.permissions.has(PermissionFlagsBits[pending.botPermission])) return "Je n’ai pas la permission Discord nécessaire pour faire ça.";
-    if (target.id === userId || target.id === guild.ownerId || target.id === botMember.id) return "Je ne peux pas appliquer cette action à ce membre.";
-    if (target.roles.highest.comparePositionTo(member.roles.highest) >= 0 && guild.ownerId !== userId) return "Discord empêche cette action : le rôle de cette personne est égal ou supérieur au tien.";
-    if (target.roles.highest.comparePositionTo(botMember.roles.highest) >= 0) return "Discord empêche cette action : son rôle est égal ou supérieur au mien.";
+    if (target.id === guild.ownerId || target.id === botMember.id) return "Je ne peux pas appliquer cette action à ce membre.";
+    if (pending.action !== "disconnect" && pending.action !== "move" && target.id === userId) return "Tu ne peux pas demander cette action sur toi-même.";
+    if (pending.action !== "disconnect" && pending.action !== "move" && target.roles.highest.comparePositionTo(member.roles.highest) >= 0 && guild.ownerId !== userId) return "Discord empêche cette action : le rôle de cette personne est égal ou supérieur au tien.";
+    if (pending.action !== "disconnect" && pending.action !== "move" && target.roles.highest.comparePositionTo(botMember.roles.highest) >= 0) return "Discord empêche cette action : son rôle est égal ou supérieur au mien.";
     try {
       if (pending.action === "kick") {
         await target.kick("Commande vocale confirmée par " + member.user.tag);
@@ -1464,6 +1465,13 @@ async function handleVoiceServerCommand(session, userId, transcript) {
         if (!target.voice.channelId) return "Cette personne n’est plus dans un salon vocal. Action annulée.";
         await target.voice.disconnect("Déconnexion vocale confirmée par " + member.user.tag);
         return "C’est fait, " + (target.displayName || target.user.username) + " a été déconnecté du salon vocal.";
+      }
+      if (pending.action === "move") {
+        if (!target.voice.channelId) return "Cette personne n’est plus dans un salon vocal. Action annulée.";
+        const destination = guild.channels.cache.get(pending.destinationChannelId);
+        if (!destination || (destination.type !== ChannelType.GuildVoice && destination.type !== ChannelType.GuildStageVoice)) return "Je ne retrouve plus le salon vocal de destination. Action annulée.";
+        await target.voice.setChannel(destination, "Déplacement vocal confirmé par " + member.user.tag);
+        return "C’est fait, " + (target.displayName || target.user.username) + " a été déplacé dans " + destination.name + ".";
       }
       await target.timeout(pending.durationMs, "Commande vocale confirmée par " + member.user.tag);
       return "C’est fait, " + (target.displayName || target.user.username) + " est mis en pause pendant " + Math.round(pending.durationMs / 60000) + " minutes.";
@@ -1479,15 +1487,19 @@ async function handleVoiceServerCommand(session, userId, transcript) {
 
   const kickMatch = commandText.match(/^(?:peux[- ]tu\s+)?(?:expulse|expulser|kick|vire|virer)\s+(.+)$/i);
   const disconnectMatch = commandText.match(/^(?:peux[- ]tu\s+)?(?:déconnecte|deconnecte|déconnecter|deconnecter|déco|deco|sors|sortir)\s+(.+?)(?:\s+(?:du|des)\s+(?:salon|salons)\s+vocaux?)?$/i);
+  const moveMatch = commandText.match(/^(?:peux[- ]tu\s+)?(?:déplace|deplace|déplacer|deplacer|bouge|transfère|transfere)\s+(.+?)\s+(?:dans|vers|au|à)\s+(?:le\s+)?(?:salon\s+)?(.+)$/i);
   const timeoutMatch = commandText.match(/^(?:peux[- ]tu\s+)?(?:mute|muter|timeout|mettre en pause|réduire au silence)\s+(.+?)(?:\s+(?:pendant|pour)\s+(\d+)\s*(s|sec|secondes?|m|min|minutes?|h|heures?))?$/i);
+  if (disconnectMatch && /^(?:moi|me|moi-même|moi meme)$/i.test(disconnectMatch[1].trim())) {
+    return "Je ne peux pas te déconnecter toi-même avec cette commande. Si tu veux quitter le salon, utilise !leave.";
+  }
   if (disconnectMatch && /^(?:le|la|lui|les|eux|elle|celui[- ]là|celle[- ]là|cette personne|cet utilisateur|ce membre)$/i.test(disconnectMatch[1].trim())) {
     return "Qui veux-tu déconnecter ? Dis « ChatIA, déconnecte [nom] du salon vocal » pour que je cible la bonne personne.";
   }
-  const actionMatch = kickMatch || disconnectMatch || timeoutMatch;
+  const actionMatch = kickMatch || disconnectMatch || moveMatch || timeoutMatch;
   if (!actionMatch) return null;
 
-  const action = kickMatch ? "kick" : disconnectMatch ? "disconnect" : "timeout";
-  const permission = action === "kick" ? "KickMembers" : action === "disconnect" ? "MoveMembers" : "ModerateMembers";
+  const action = kickMatch ? "kick" : disconnectMatch ? "disconnect" : moveMatch ? "move" : "timeout";
+  const permission = action === "kick" ? "KickMembers" : action === "disconnect" || action === "move" ? "MoveMembers" : "ModerateMembers";
   if (!member.permissions.has(PermissionFlagsBits[permission])) {
     const permissionLabel = action === "kick" ? "Expulser des membres" : action === "disconnect" ? "Déplacer des membres" : "Modérer les membres";
     return "Je ne peux pas faire ça : tu n’as pas la permission Discord requise (" + permissionLabel + ").";
@@ -1499,12 +1511,25 @@ async function handleVoiceServerCommand(session, userId, transcript) {
   }
   const target = found.member;
   const botMember = guild.members.me;
-  if (target.id === userId) return "Tu ne peux pas demander cette action sur toi-même.";
+  if (action !== "disconnect" && action !== "move" && target.id === userId) return "Tu ne peux pas demander cette action sur toi-même.";
   if (target.id === guild.ownerId || target.id === botMember?.id) return "Je ne peux pas appliquer cette action à ce membre.";
-  if (guild.ownerId !== userId && target.roles.highest.comparePositionTo(member.roles.highest) >= 0) return "Je ne peux pas faire ça : le rôle de cette personne est égal ou supérieur au tien.";
+  if (action !== "disconnect" && action !== "move" && guild.ownerId !== userId && target.roles.highest.comparePositionTo(member.roles.highest) >= 0) return "Je ne peux pas faire ça : le rôle de cette personne est égal ou supérieur au tien.";
   if (!botMember?.permissions.has(PermissionFlagsBits[permission])) return "Je n’ai pas la permission Discord nécessaire pour faire ça.";
-  if (action === "disconnect" && !target.voice.channelId) return "Cette personne n’est actuellement dans aucun salon vocal.";
-  if (target.roles.highest.comparePositionTo(botMember.roles.highest) >= 0) return "Je ne peux pas agir sur ce membre : son rôle est égal ou supérieur au mien.";
+  if ((action === "disconnect" || action === "move") && !target.voice.channelId) return "Cette personne n’est actuellement dans aucun salon vocal.";
+  if (action !== "disconnect" && action !== "move" && target.roles.highest.comparePositionTo(botMember.roles.highest) >= 0) return "Je ne peux pas agir sur ce membre : son rôle est égal ou supérieur au mien.";
+
+  let destinationChannel = null;
+  if (action === "move") {
+    const destinationText = normalizeMemberSearch(moveMatch[2].replace(/^(?:le\s+)?salon\s+/i, ""));
+    const voiceChannels = [...guild.channels.cache.values()].filter((channel) => channel.type === ChannelType.GuildVoice || channel.type === ChannelType.GuildStageVoice);
+    const exactChannels = voiceChannels.filter((channel) => normalizeMemberSearch(channel.name) === destinationText);
+    const partialChannels = exactChannels.length ? exactChannels : voiceChannels.filter((channel) => normalizeMemberSearch(channel.name).includes(destinationText));
+    if (!destinationText || partialChannels.length !== 1) {
+      return partialChannels.length > 1 ? "J’ai trouvé plusieurs salons vocaux possibles. Donne le nom exact du salon." : "Je ne trouve pas ce salon vocal. Donne son nom exact.";
+    }
+    destinationChannel = partialChannels[0];
+    if (target.voice.channelId === destinationChannel.id) return "Cette personne est déjà dans ce salon vocal.";
+  }
 
   let durationMs = 10 * 60 * 1000;
   if (timeoutMatch?.[2]) {
@@ -1519,6 +1544,7 @@ async function handleVoiceServerCommand(session, userId, transcript) {
     action,
     permission,
     botPermission: permission,
+    destinationChannelId: destinationChannel?.id || null,
     durationMs,
     expiresAt: Date.now() + 20000,
   });
@@ -1526,7 +1552,9 @@ async function handleVoiceServerCommand(session, userId, transcript) {
     ? "expulser " + (target.displayName || target.user.username) + " du serveur"
     : action === "disconnect"
       ? "déconnecter " + (target.displayName || target.user.username) + " de son salon vocal"
-      : "mettre " + (target.displayName || target.user.username) + " en pause pendant " + Math.round(durationMs / 60000) + " minutes";
+      : action === "move"
+        ? "déplacer " + (target.displayName || target.user.username) + " dans " + destinationChannel.name
+        : "mettre " + (target.displayName || target.user.username) + " en pause pendant " + Math.round(durationMs / 60000) + " minutes";
   return "Je vais " + actionDescription + ". Dis « ChatIA, confirme » dans les 20 secondes pour confirmer, ou « ChatIA, annule » pour annuler.";
 }
 
