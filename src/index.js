@@ -1594,7 +1594,8 @@ async function generateTextChatReply(guild, channel, author, text, session = nul
     memory.lastReplyByUser.set(author.id, Date.now());
     void sendDialogueLog(session, "**" + username + " (texte) :** " + text + "\n**Bot :** " + reply);
   }
-  return { reply: displayedReply, ttsText: clipForTts(reply), session };
+  const voiceSession = session && member?.voice?.channelId === session.voiceChannelId ? session : null;
+  return { reply: displayedReply, ttsText: clipForTts(reply), session: voiceSession };
 }
 
 async function handleTextChatCommand({ guild, channel, author, text, respond }) {
