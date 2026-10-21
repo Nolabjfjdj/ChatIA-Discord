@@ -398,6 +398,50 @@ function looksDirectedAtBot(text) {
 
   return /^(qui|quoi|que|qu’est-ce que|quest-ce que|comment|où|ou|quand|pourquoi|est-ce que|est ce que|c’est quoi|c'est quoi|c est quoi|ça veut dire quoi|ca veut dire quoi|tu peux|peux-tu|peux tu|tu peux me dire|tu peux expliquer|tu connais|tu sais|explique|explique-moi|explique moi|dis-moi|dis moi|tu pourrais|pourrais-tu|pourrais tu|wer|was|wie|wo|wann|warum|wieso|weshalb|kannst du|bitte|erklär|erklaer|sag mal)(\s|$)/i.test(lower);
 }
+async function classifyWhetherAddressedToBot(memory, transcript, hasAddressingClue) {
+  const recentContext = memory.history
+    .slice(-6)
+    .map((message) => ({
+      role: message.role === "assistant" ? "ChatIA" : "interlocuteur",
+      content: trimForMemory(message.content || ""),
+    }))
+    .map((message) => message.role + ": " + message.content)
+    .join("\n");
+
+  const prompt = [
+    "Tu es un détecteur d'intention pour un assistant vocal dans un salon Discord.",
+    "Décide si la dernière transcription s'adresse réellement à ChatIA, ou si les personnes parlent entre elles.",
+    "Réponds uniquement par OUI ou NON.",
+    "OUI si la personne pose une question ou donne une instruction à ChatIA, ou continue clairement une conversation récente avec ChatIA même sans répéter son nom.",
+    "NON si la personne parle de ChatGPT, Gemini, Claude ou d'une autre IA à ses amis, ou pose une question à quelqu'un d'autre.",
+    "La simple mention d'un nom d'IA ne suffit jamais à répondre OUI.",
+    "Si le contexte ne permet pas de savoir, réponds NON.",
+    "Un indice lexical a été détecté : " + (hasAddressingClue ? "oui" : "non") + ". Cet indice n'est pas une preuve à lui seul.",
+    "Contexte récent :\n" + (recentContext || "(aucun échange récent)"),
+    "Nouvelle transcription : " + transcript,
+    "La décision doit concerner uniquement cette transcription."
+  ].join("\n");
+
+  try {
+    const data = await callGeminiGenerateContent(GEMINI_MODEL, {
+      contents: [{ role: "user", parts: [{ text: prompt }] }],
+      generationConfig: { temperature: 0, maxOutputTokens: 4 },
+    });
+    const answer = data?.candidates?.[0]?.content?.parts
+      ?.map((part) => typeof part.text === "string" ? part.text : "")
+      .join(" ")
+      .trim()
+      .toUpperCase();
+    const decision = answer?.match(/\b(OUI|NON)\b/)?.[1];
+    if (decision) return decision === "OUI";
+    log("Gemini intent check returned an unclear result; ignoring transcript to avoid an unsolicited reply.");
+  } catch (error) {
+    log("Gemini intent check failed; ignoring transcript to avoid an unsolicited reply.", error?.message || error);
+  }
+
+  return false;
+}
+
 function getChannelMemoryKey(guildId, voiceChannelId) {
   return `${guildId}:${voiceChannelId}`;
 }
@@ -453,7 +497,7 @@ function trimForMemory(text) {
   return `${singleLine.slice(0, 697).trim()}...`;
 }
 
-function shouldIgnoreTranscript(session, userId, transcript) {
+async function shouldIgnoreTranscript(session, userId, transcript) {
   const memory = session.memory;
   const now = Date.now();
   const clean = normalizeTranscriptText(transcript);
@@ -481,7 +525,14 @@ function shouldIgnoreTranscript(session, userId, transcript) {
   }
 
   const canonical = canonicalizeTranscript(clean);
-  const directedAtBot = looksDirectedAtBot(clean);
+  const hasAddressingClue = looksDirectedAtBot(clean);
+  const recentBotConversation = now - memory.lastReplyAt < 30000;
+  let directedAtBot = false;
+
+  if (hasAddressingClue || recentBotConversation) {
+    directedAtBot = await classifyWhetherAddressedToBot(memory, clean, hasAddressingClue);
+  }
+
   if (REPLY_ONLY_WHEN_ADDRESSED && !directedAtBot) return { ignore: true, reason: "not-addressed-to-bot" };
   if (!directedAtBot && countWords(clean) < MIN_UNADDRESSED_WORDS) return { ignore: true, reason: "short-conversation" };
   const lastSame = memory.recentTranscriptByUser.get(userId);
@@ -834,7 +885,7 @@ async function captureUtterance(session, userId) {
         const transcript = await transcribeAudio(filePath);
         if (!transcript) return;
 
-        const decision = shouldIgnoreTranscript(session, userId, transcript);
+        const decision = await shouldIgnoreTranscript(session, userId, transcript);
         if (decision.ignore) {
           log(`[${session.guildId}] Transcription ignorée (${decision.reason}) : ${transcript}`);
           return;
