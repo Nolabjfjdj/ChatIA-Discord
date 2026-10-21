@@ -100,7 +100,7 @@ const MIN_UNADDRESSED_WORDS = parseEnvInt(process.env.MIN_UNADDRESSED_WORDS, 5);
 const GEMINI_REQUEST_TIMEOUT_MS = parseEnvInt(process.env.GEMINI_REQUEST_TIMEOUT_MS, 12000);
 const MIN_TRANSCRIPT_WORDS = parseEnvInt(process.env.MIN_TRANSCRIPT_WORDS, 2);
 const CHAT_MAX_TOKENS = parseEnvInt(process.env.CHAT_MAX_TOKENS, 220);
-const MAX_TTS_CHARS = parseEnvInt(process.env.MAX_TTS_CHARS, 420);
+const MAX_TTS_CHARS = parseEnvInt(process.env.MAX_TTS_CHARS, 1200);
 const MEMORY_MAX_MESSAGES = parseEnvInt(process.env.MEMORY_MAX_MESSAGES, 24);
 const MEMORY_MAX_CHARS = parseEnvInt(process.env.MEMORY_MAX_CHARS, 7000);
 const BOT_WAKE_WORDS = parseCsvEnv(process.env.BOT_WAKE_WORDS, ["bot", "discord bot", "chatia", "chat ia", "chatgpt", "chat gpt", "tchatgpt", "tchat gpt", "tchatteia", "tchatte ia", "tchatia", "tchat ia", "tchat ia", "chat y a", "chati a"]);
@@ -1287,19 +1287,18 @@ function clipForTts(text) {
   const singleLine = normalizeTranscriptText(text);
   if (singleLine.length <= MAX_TTS_CHARS) return singleLine;
 
-  const window = singleLine.slice(0, MAX_TTS_CHARS);
-  const minBoundaryIndex = Math.max(0, MAX_TTS_CHARS - 120);
+  const searchWindow = singleLine.slice(0, MAX_TTS_CHARS + 500);
   const sentenceBoundary = Math.max(
-    window.lastIndexOf(". "),
-    window.lastIndexOf("! "),
-    window.lastIndexOf("? "),
+    searchWindow.lastIndexOf(". "),
+    searchWindow.lastIndexOf("! "),
+    searchWindow.lastIndexOf("? "),
   );
 
-  if (sentenceBoundary >= minBoundaryIndex) {
-    return window.slice(0, sentenceBoundary + 1).trim();
+  if (sentenceBoundary >= 0) {
+    return searchWindow.slice(0, sentenceBoundary + 1).trim();
   }
 
-  return `${window.slice(0, Math.max(0, MAX_TTS_CHARS - 3)).trim()}...`;
+  return singleLine;
 }
 
 async function speakReply(session, text) {
