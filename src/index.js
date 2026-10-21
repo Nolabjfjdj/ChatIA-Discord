@@ -76,7 +76,7 @@ const ELEVENLABS_USE_SPEAKER_BOOST =
 const TTS_PROVIDER = (
   process.env.TTS_PROVIDER || (ELEVENLABS_API_KEY ? "elevenlabs" : "google")
 ).toLowerCase();
-const AUTO_JOIN_VOICE_CHANNELS_DEFAULT = parseEnvBool(process.env.AUTO_JOIN_VOICE_CHANNELS_DEFAULT, true);
+const AUTO_JOIN_VOICE_CHANNELS_DEFAULT = parseEnvBool(process.env.AUTO_JOIN_VOICE_CHANNELS, true);
 const autoJoinOverrides = new Map();
 const dialogueLogSettings = new Map();
 const AUTO_JOIN_MANUAL_LEAVE_COOLDOWN_MS = Number.parseInt(
@@ -1539,10 +1539,8 @@ client.once("ready", async () => {
 });
 
 client.on("voiceStateUpdate", (oldState, newState) => {
-  if (!AUTO_JOIN_VOICE_CHANNELS_DEFAULT) return;
-
   const guild = newState.guild || oldState.guild;
-  if (!guild) return;
+  if (!guild || !isAutoJoinEnabled(guild.id)) return;
 
   const member = newState.member || oldState.member;
   if (member?.user?.bot) return;
@@ -1626,12 +1624,12 @@ client.on("messageCreate", async (message) => {
     }
 
     if (command === "leave") {
-      if (AUTO_JOIN_VOICE_CHANNELS_DEFAULT) {
+      if (isAutoJoinEnabled(message.guild.id)) {
         setAutoJoinCooldown(message.guild.id, AUTO_JOIN_MANUAL_LEAVE_COOLDOWN_MS);
       }
       await destroySession(message.guild.id);
       await message.reply(
-        AUTO_JOIN_VOICE_CHANNELS_DEFAULT
+        isAutoJoinEnabled(message.guild.id)
           ? `Salon vocal quitté. Reconnexion automatique suspendue pendant ${Math.round(
               AUTO_JOIN_MANUAL_LEAVE_COOLDOWN_MS / 1000,
             )} s.`
