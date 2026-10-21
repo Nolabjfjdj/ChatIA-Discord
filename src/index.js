@@ -516,7 +516,16 @@ function hasExplicitBotWakeWord(text) {
   if (!lower) return false;
 
   const normalizedText = " " + lower.replace(/[^a-z0-9à-ÿ]+/gi, " ") + " ";
-  return BOT_WAKE_WORDS.some((wakeWord) => {
+  const wakeWords = [...new Set([
+    ...BOT_WAKE_WORDS,
+    "chatia",
+    "chat ia",
+    "tchatia",
+    "tchat ia",
+    "chat y a",
+    "chati a",
+  ])];
+  return wakeWords.some((wakeWord) => {
     const normalizedWakeWord = wakeWord.toLowerCase().replace(/[^a-z0-9à-ÿ]+/gi, " ").trim();
     return normalizedWakeWord && normalizedText.includes(" " + normalizedWakeWord + " ");
   });
