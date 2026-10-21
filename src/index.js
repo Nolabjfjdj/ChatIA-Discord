@@ -305,9 +305,10 @@ function isSensitiveChannelName(name) {
   return /(^|[-_ ])(logs?|journal|audit|modlogs?|staff|moderation|moderateurs?|administration|admins?|tickets?|support-prive|private)([-_ ]|$)/i.test(normalized);
 }
 
-function buildSafeGuildContext(guild, member) {
+async function buildSafeGuildContext(guild, member, preferredChannel = null) {
   if (!guild || !member) return "";
   const visibleChannels = [];
+  const readableTextChannels = [];
   const sensitiveCategoryIds = new Set();
 
   for (const channel of guild.channels.cache.values()) {
@@ -322,8 +323,10 @@ function buildSafeGuildContext(guild, member) {
     if (isSensitiveChannelName(channel.name)) continue;
     const permissions = channel.permissionsFor(member);
     if (!permissions?.has(PermissionFlagsBits.ViewChannel)) continue;
-    if (channel.type === ChannelType.GuildText || channel.type === ChannelType.GuildAnnouncement) visibleChannels.push("#" + channel.name);
-    else if (channel.type === ChannelType.GuildVoice) visibleChannels.push("vocal: " + channel.name);
+    if (channel.type === ChannelType.GuildText || channel.type === ChannelType.GuildAnnouncement) {
+      visibleChannels.push("#" + channel.name);
+      if (permissions.has(PermissionFlagsBits.ReadMessageHistory)) readableTextChannels.push(channel);
+    } else if (channel.type === ChannelType.GuildVoice) visibleChannels.push("vocal: " + channel.name);
     else if (channel.type === ChannelType.GuildStageVoice) visibleChannels.push("scène: " + channel.name);
     else if (channel.type === ChannelType.GuildForum) visibleChannels.push("forum: " + channel.name);
   }
@@ -337,6 +340,26 @@ function buildSafeGuildContext(guild, member) {
     .map((entry) => entry.displayName || entry.user?.username)
     .filter(Boolean)
     .slice(0, 30);
+
+  const preferred = preferredChannel && readableTextChannels.find((channel) => channel.id === preferredChannel.id);
+  const messageChannels = [
+    ...(preferred ? [preferred] : []),
+    ...readableTextChannels.filter((channel) => channel.id !== preferred?.id),
+  ].slice(0, 3);
+  const recentMessages = [];
+  for (const channel of messageChannels) {
+    try {
+      const fetched = await channel.messages.fetch({ limit: 4 });
+      const lines = [...fetched.values()]
+        .filter((message) => !message.author.bot && message.content?.trim())
+        .sort((a, b) => a.createdTimestamp - b.createdTimestamp)
+        .map((message) => "[" + channel.name + "] " + (message.member?.displayName || message.author.username) + " : " + normalizeTranscriptText(message.content).slice(0, 220));
+      recentMessages.push(...lines);
+    } catch {
+    }
+    if (recentMessages.length >= 8) break;
+  }
+
   const lines = [
     "Nom du serveur : " + guild.name,
     guild.description ? "Description : " + guild.description : "",
@@ -344,8 +367,9 @@ function buildSafeGuildContext(guild, member) {
     "Salons visibles par ce membre : " + (visibleChannels.slice(0, 80).join(", ") || "aucun salon autorisé disponible"),
     "Rôles non sensibles : " + (roles.join(", ") || "aucun"),
     "Membres non-bots actuellement en cache (liste partielle, maximum 30) : " + (cachedMembers.join(", ") || "aucun membre en cache"),
+    "Messages récents de salons lisibles et non sensibles (extraits partiels) : " + (recentMessages.slice(0, 8).join("\n") || "aucun message récent disponible"),
   ].filter(Boolean);
-  return lines.join("\n").slice(0, 4500);
+  return lines.join("\n").slice(0, 6500);
 }
 
 function normalizeTranscriptText(text) {
@@ -1386,7 +1410,7 @@ async function generateReply(session, userId, transcript, decision = null) {
       return fallbackReply;
     }
 
-    const serverContext = buildSafeGuildContext(guild, member);
+    const serverContext = await buildSafeGuildContext(guild, member, session?.textChannelId ? guild.channels.cache.get(session.textChannelId) : null);
     const userMessage = `${username} sagt im Sprachchat: ${transcript}`;
     const messages = [
       { role: "system", content: buildSystemPrompt(serverContext) },
@@ -1659,7 +1683,7 @@ async function generateTextChatReply(guild, channel, author, text, session = nul
   const memory = session?.memory || getOrCreateChannelMemory(guild.id, "text-" + channel.id);
   const member = await guild.members.fetch(author.id).catch(() => null);
   const username = member?.displayName || author.globalName || author.username || "Utilisateur";
-  const serverContext = buildSafeGuildContext(guild, member);
+  const serverContext = await buildSafeGuildContext(guild, member, channel);
   const userMessage = username + " écrit dans le salon texte : " + normalizeTranscriptText(text);
   const messages = [
     { role: "system", content: buildSystemPrompt(serverContext) },
