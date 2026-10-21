@@ -1460,6 +1460,11 @@ async function handleVoiceServerCommand(session, userId, transcript) {
         await target.kick("Commande vocale confirmée par " + member.user.tag);
         return "C’est fait, " + (target.displayName || target.user.username) + " a été expulsé du serveur.";
       }
+      if (pending.action === "disconnect") {
+        if (!target.voice.channelId) return "Cette personne n’est plus dans un salon vocal. Action annulée.";
+        await target.voice.disconnect("Déconnexion vocale confirmée par " + member.user.tag);
+        return "C’est fait, " + (target.displayName || target.user.username) + " a été déconnecté du salon vocal.";
+      }
       await target.timeout(pending.durationMs, "Commande vocale confirmée par " + member.user.tag);
       return "C’est fait, " + (target.displayName || target.user.username) + " est mis en pause pendant " + Math.round(pending.durationMs / 60000) + " minutes.";
     } catch (error) {
@@ -1473,14 +1478,16 @@ async function handleVoiceServerCommand(session, userId, transcript) {
   }
 
   const kickMatch = commandText.match(/^(?:peux[- ]tu\s+)?(?:expulse|expulser|kick|vire|virer)\s+(.+)$/i);
+  const disconnectMatch = commandText.match(/^(?:peux[- ]tu\s+)?(?:déconnecte|deconnecte|déconnecter|deconnecter|déco|deco|sors|sortir)\s+(.+?)(?:\s+(?:du|des)\s+(?:salon|salons)\s+vocaux?)?$/i);
   const timeoutMatch = commandText.match(/^(?:peux[- ]tu\s+)?(?:mute|muter|timeout|mettre en pause|réduire au silence)\s+(.+?)(?:\s+(?:pendant|pour)\s+(\d+)\s*(s|sec|secondes?|m|min|minutes?|h|heures?))?$/i);
-  const actionMatch = kickMatch || timeoutMatch;
+  const actionMatch = kickMatch || disconnectMatch || timeoutMatch;
   if (!actionMatch) return null;
 
-  const action = kickMatch ? "kick" : "timeout";
-  const permission = action === "kick" ? "KickMembers" : "ModerateMembers";
+  const action = kickMatch ? "kick" : disconnectMatch ? "disconnect" : "timeout";
+  const permission = action === "kick" ? "KickMembers" : action === "disconnect" ? "MoveMembers" : "ModerateMembers";
   if (!member.permissions.has(PermissionFlagsBits[permission])) {
-    return "Je ne peux pas faire ça : tu n’as pas la permission Discord requise (" + (action === "kick" ? "Expulser des membres" : "Modérer les membres") + ").";
+    const permissionLabel = action === "kick" ? "Expulser des membres" : action === "disconnect" ? "Déplacer des membres" : "Modérer les membres";
+    return "Je ne peux pas faire ça : tu n’as pas la permission Discord requise (" + permissionLabel + ").";
   }
   const found = await findVoiceCommandTarget(guild, actionMatch[1].trim());
   if (!found.member) {
@@ -1492,7 +1499,8 @@ async function handleVoiceServerCommand(session, userId, transcript) {
   if (target.id === userId) return "Tu ne peux pas demander cette action sur toi-même.";
   if (target.id === guild.ownerId || target.id === botMember?.id) return "Je ne peux pas appliquer cette action à ce membre.";
   if (guild.ownerId !== userId && target.roles.highest.comparePositionTo(member.roles.highest) >= 0) return "Je ne peux pas faire ça : le rôle de cette personne est égal ou supérieur au tien.";
-  if (!botMember?.permissions.has(PermissionFlagsBits[action === "kick" ? "KickMembers" : "ModerateMembers"])) return "Je n’ai pas la permission Discord nécessaire pour faire ça.";
+  if (!botMember?.permissions.has(PermissionFlagsBits[permission])) return "Je n’ai pas la permission Discord nécessaire pour faire ça.";
+  if (action === "disconnect" && !target.voice.channelId) return "Cette personne n’est actuellement dans aucun salon vocal.";
   if (target.roles.highest.comparePositionTo(botMember.roles.highest) >= 0) return "Je ne peux pas agir sur ce membre : son rôle est égal ou supérieur au mien.";
 
   let durationMs = 10 * 60 * 1000;
@@ -1513,7 +1521,9 @@ async function handleVoiceServerCommand(session, userId, transcript) {
   });
   const actionDescription = action === "kick"
     ? "expulser " + (target.displayName || target.user.username) + " du serveur"
-    : "mettre " + (target.displayName || target.user.username) + " en pause pendant " + Math.round(durationMs / 60000) + " minutes";
+    : action === "disconnect"
+      ? "déconnecter " + (target.displayName || target.user.username) + " de son salon vocal"
+      : "mettre " + (target.displayName || target.user.username) + " en pause pendant " + Math.round(durationMs / 60000) + " minutes";
   return "Je vais " + actionDescription + ". Dis « ChatIA, confirme » dans les 20 secondes pour confirmer, ou « ChatIA, annule » pour annuler.";
 }
 
