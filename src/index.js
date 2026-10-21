@@ -522,6 +522,9 @@ function hasExplicitBotWakeWord(text) {
     "chat ia",
     "tchatia",
     "tchat ia",
+    "tchattia",
+    "tchatteia",
+    "tchatte ia",
     "chat y a",
     "chati a",
   ])];
