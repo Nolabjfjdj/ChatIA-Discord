@@ -1756,16 +1756,16 @@ async function handleTextChatCommand({ guild, channel, author, text, respond }) 
 }
 async function registerSlashCommands() {
   const commands = [
-    new SlashCommandBuilder().setName("join").setDescription("Rejoindre ton salon vocal et écouter"),
-    new SlashCommandBuilder().setName("leave").setDescription("Quitter le salon vocal"),
-    new SlashCommandBuilder().setName("say").setDescription("Faire prononcer un texte au bot").addStringOption(option => option.setName("texte").setDescription("Texte à prononcer").setRequired(true).setMaxLength(1500)),
+    new SlashCommandBuilder().setName("join").setDescription("Rejoindre ton salon vocal et écouter").setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
+    new SlashCommandBuilder().setName("leave").setDescription("Quitter le salon vocal").setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
+    new SlashCommandBuilder().setName("say").setDescription("Faire prononcer un texte au bot").setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild).addStringOption(option => option.setName("texte").setDescription("Texte à prononcer").setRequired(true).setMaxLength(1500)),
     new SlashCommandBuilder().setName("chat").setDescription("Envoyer un message à ChatIA par écrit").addStringOption(option => option.setName("message").setDescription("Ton message pour ChatIA").setRequired(true).setMaxLength(1500)),
     new SlashCommandBuilder().setName("logs").setDescription("Configurer les journaux de dialogue")
       .addSubcommand(sub => sub.setName("on").setDescription("Activer l’affichage des dialogues"))
       .addSubcommand(sub => sub.setName("off").setDescription("Désactiver l’affichage des dialogues"))
       .addSubcommand(sub => sub.setName("salon").setDescription("Choisir le salon de journalisation").addChannelOption(option => option.setName("salon").setDescription("Salon texte où envoyer les dialogues").setRequired(true).addChannelTypes(ChannelType.GuildText)))
       .addSubcommand(sub => sub.setName("reset").setDescription("Revenir au salon texte par défaut")),
-    new SlashCommandBuilder().setName("autoreconnect").setDescription("Configurer la reconnexion vocale automatique")
+    new SlashCommandBuilder().setName("autoreconnect").setDescription("Configurer la reconnexion vocale automatique").setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
       .addSubcommand(sub => sub.setName("on").setDescription("Activer la reconnexion automatique"))
       .addSubcommand(sub => sub.setName("off").setDescription("Désactiver la reconnexion automatique")),
     new SlashCommandBuilder().setName("help").setDescription("Afficher l’aide du bot")
@@ -1781,6 +1781,13 @@ async function handleSlashCommand(interaction) {
     return;
   }
   const command = interaction.commandName;
+  if (["join", "leave", "say", "autoreconnect"].includes(command)) {
+    const member = await interaction.guild.members.fetch(interaction.user.id);
+    if (!member.permissions.has(PermissionFlagsBits.ManageGuild)) {
+      await interaction.reply({ content: "Il faut la permission **Gérer le serveur** pour utiliser cette commande.", ephemeral: true });
+      return;
+    }
+  }
   const reply = async content => {
     const payload = typeof content === "string" ? { content } : content;
     if (interaction.deferred || interaction.replied) return interaction.followUp(payload);
@@ -1853,7 +1860,7 @@ async function handleSlashCommand(interaction) {
       return;
     }
     if (command === "help") {
-      await reply([
+      await reply({ content: [
         "**Commandes slash de ChatIA**",
         "/join - Rejoindre ton salon vocal",
         "/leave - Quitter le salon vocal",
@@ -1862,7 +1869,7 @@ async function handleSlashCommand(interaction) {
         "/logs on, /logs off, /logs salon, /logs reset - Configurer les journaux (permission Gérer le serveur)",
         "/autoreconnect on ou /autoreconnect off - Configurer la reconnexion automatique (permission Gérer le serveur)",
         "/help - Afficher cette aide"
-      ].join("\n"));
+      ].join("\n"), ephemeral: true });
     }
   } catch (error) {
     log("Slash command error", error);
