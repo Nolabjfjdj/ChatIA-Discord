@@ -572,9 +572,6 @@ async function shouldIgnoreTranscript(session, userId, transcript) {
   if (!hasExplicitWakeWord && aloneWithBot) {
     directedAtBot = true;
     log(`[${session.guildId}] Accepting voice transcript because only one human is in the voice channel.`);
-  } else if (!hasExplicitWakeWord && recentBotConversation) {
-    directedAtBot = true;
-    log(`[${session.guildId}] Accepting transcript as a follow-up to the bot's recent reply.`);
   } else if (!hasExplicitWakeWord && hasAddressingClue) {
     directedAtBot = await classifyWhetherAddressedToBot(memory, clean, hasAddressingClue);
   }
