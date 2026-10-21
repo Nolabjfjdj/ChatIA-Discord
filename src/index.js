@@ -566,12 +566,16 @@ async function shouldIgnoreTranscript(session, userId, transcript) {
   const voiceChannel = client.channels.cache.get(session.voiceChannelId);
   const humanCount = getHumanVoiceMemberCount(voiceChannel);
   const aloneWithBot = humanCount === 1;
-  const recentBotConversation = now - memory.lastReplyAt < BOT_FOLLOW_UP_WINDOW_MS;
+  const lastReplyToThisUser = memory.lastReplyByUser.get(userId) || 0;
+  const recentConversationWithThisUser = now - lastReplyToThisUser < BOT_FOLLOW_UP_WINDOW_MS;
   let directedAtBot = hasExplicitWakeWord;
 
   if (!hasExplicitWakeWord && aloneWithBot) {
     directedAtBot = true;
     log(`[${session.guildId}] Accepting voice transcript because only one human is in the voice channel.`);
+  } else if (!hasExplicitWakeWord && recentConversationWithThisUser) {
+    directedAtBot = true;
+    log(`[${session.guildId}] Accepting transcript as a follow-up from the same user who recently spoke with the bot.`);
   } else if (!hasExplicitWakeWord && hasAddressingClue) {
     directedAtBot = await classifyWhetherAddressedToBot(memory, clean, hasAddressingClue);
   }
