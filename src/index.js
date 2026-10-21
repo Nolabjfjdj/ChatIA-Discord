@@ -1570,11 +1570,59 @@ async function handleSayCommand(message, text) {
   await message.reply(`Je prononce : "${clipped}"`);
 }
 
+async function generateTextChatReply(guild, channel, author, text, session = null) {
+  const memory = session?.memory || getOrCreateChannelMemory(guild.id, "text-" + channel.id);
+  const member = await guild.members.fetch(author.id).catch(() => null);
+  const username = member?.displayName || author.globalName || author.username || "Utilisateur";
+  const userMessage = username + " écrit dans le salon texte : " + normalizeTranscriptText(text);
+  const messages = [
+    { role: "system", content: buildSystemPrompt() },
+    ...memory.history,
+    { role: "user", content: userMessage },
+  ];
+  const generated = await generateChatCompletionText(messages);
+  const reply = normalizeTranscriptText(generated);
+  if (!reply) throw new Error("Le modèle n’a renvoyé aucune réponse.");
+  const displayedReply = reply.length > 1900 ? reply.slice(0, 1897).trimEnd() + "..." : reply;
+  appendConversationHistory(
+    memory,
+    { role: "user", content: trimForMemory(userMessage) },
+    { role: "assistant", content: trimForMemory(reply) },
+  );
+  if (session) {
+    memory.lastReplyAt = Date.now();
+    memory.lastReplyByUser.set(author.id, Date.now());
+    void sendDialogueLog(session, "**" + username + " (texte) :** " + text + "\\n**Bot :** " + reply);
+  }
+  return { reply: displayedReply, ttsText: clipForTts(reply), session };
+}
+
+async function handleTextChatCommand({ guild, channel, author, text, respond }) {
+  const cleanText = normalizeTranscriptText(text);
+  if (!cleanText) {
+    await respond("Écris un message après la commande, par exemple /chat Salut ChatIA.");
+    return;
+  }
+  const session = sessions.get(guild.id) || null;
+  try {
+    const result = await generateTextChatReply(guild, channel, author, cleanText, session);
+    await respond(result.reply);
+    if (result.session) {
+      void enqueueSessionWork(result.session, async () => {
+        await speakReply(result.session, result.ttsText);
+      });
+    }
+  } catch (error) {
+    log("Text chat error", error);
+    await respond("Je n’ai pas réussi à générer une réponse. Réessaie dans un instant.");
+  }
+}
 async function registerSlashCommands() {
   const commands = [
     new SlashCommandBuilder().setName("join").setDescription("Rejoindre ton salon vocal et écouter"),
     new SlashCommandBuilder().setName("leave").setDescription("Quitter le salon vocal"),
     new SlashCommandBuilder().setName("say").setDescription("Faire prononcer un texte au bot").addStringOption(option => option.setName("texte").setDescription("Texte à prononcer").setRequired(true).setMaxLength(1500)),
+    new SlashCommandBuilder().setName("chat").setDescription("Envoyer un message à ChatIA par écrit").addStringOption(option => option.setName("message").setDescription("Ton message pour ChatIA").setRequired(true).setMaxLength(1500)),
     new SlashCommandBuilder().setName("logs").setDescription("Configurer les journaux de dialogue")
       .addSubcommand(sub => sub.setName("on").setDescription("Activer l’affichage des dialogues"))
       .addSubcommand(sub => sub.setName("off").setDescription("Désactiver l’affichage des dialogues"))
@@ -1613,6 +1661,20 @@ async function handleSlashCommand(interaction) {
       await reply(isAutoJoinEnabled(interaction.guild.id)
         ? `Salon vocal quitté. Reconnexion automatique suspendue pendant ${Math.round(AUTO_JOIN_MANUAL_LEAVE_COOLDOWN_MS / 1000)} s.`
         : "Salon vocal quitté.");
+      return;
+    }
+    if (command === "chat") {
+      await interaction.deferReply();
+      await handleTextChatCommand({
+        guild: interaction.guild,
+        channel: interaction.channel,
+        author: interaction.user,
+        text: interaction.options.getString("message", true),
+        respond: async content => {
+          if (interaction.deferred || interaction.replied) return interaction.editReply(content);
+          return interaction.reply(content);
+        },
+      });
       return;
     }
     if (command === "say") {
@@ -1659,6 +1721,7 @@ async function handleSlashCommand(interaction) {
         "/join - Rejoindre ton salon vocal",
         "/leave - Quitter le salon vocal",
         "/say texte - Faire prononcer un texte",
+        "/chat message - Discuter par écrit (la réponse est aussi prononcée si je suis en vocal)",
         "/logs on, /logs off, /logs salon, /logs reset - Configurer les journaux (permission Gérer le serveur)",
         "/autoreconnect on ou /autoreconnect off - Configurer la reconnexion automatique (permission Gérer le serveur)",
         "/help - Afficher cette aide"
@@ -1824,6 +1887,17 @@ client.on("messageCreate", async (message) => {
       return;
     }
 
+    if (command === "chat") {
+      await handleTextChatCommand({
+        guild: message.guild,
+        channel: message.channel,
+        author: message.author,
+        text: argText,
+        respond: content => message.reply(content),
+      });
+      return;
+    }
+
     if (command === "say") {
       await handleSayCommand(message, argText);
       return;
@@ -1836,12 +1910,13 @@ client.on("messageCreate", async (message) => {
           `${PREFIX}join - Rejoindre le salon vocal et écouter`,
           `${PREFIX}leave - Quitter le salon vocal`,
           `${PREFIX}say <texte> - Tester la réponse vocale`,
+          `${PREFIX}chat <message> - Discuter par écrit, avec réponse vocale si je suis connecté en vocal`,
           `${PREFIX}logs on/off - Activer ou masquer les dialogues en texte`,
           `${PREFIX}logs salon #salon - Choisir le salon de logs`,
           `${PREFIX}autoreconnect on/off - Activer ou désactiver la reconnexion automatique`,
           `Rejoindre automatiquement : ${isAutoJoinEnabled(message.guild.id) ? "activé" : "désactivé"}`,
           `${PREFIX}help - Afficher l’aide`,
-          "Commandes slash : /join, /leave, /say, /logs, /autoreconnect, /help",
+          "Commandes slash : /join, /leave, /say, /chat, /logs, /autoreconnect, /help",
         ].join("\n"),
       );
       return;
