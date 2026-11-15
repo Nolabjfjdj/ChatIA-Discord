@@ -344,14 +344,18 @@ async function buildSafeGuildContext(guild, member, preferredChannel = null, tra
   });
   const preferred = preferredChannel && readableTextChannels.find((channel) => channel.id === preferredChannel.id);
   const messageChannels = [...new Map([...mentionedChannels, ...(preferred ? [preferred] : []), ...readableTextChannels].map((channel) => [channel.id, channel])).values()].slice(0, 5);
-  const recentMessages = [];
-  for (const channel of messageChannels) {
+  const fetchedChannelMessages = await Promise.all(messageChannels.map(async (channel) => {
     try {
       const fetched = await channel.messages.fetch({ limit: mentionedChannels.some((mentioned) => mentioned.id === channel.id) ? 10 : 4 });
-      recentMessages.push(...[...fetched.values()].filter((message) => !message.author.bot && message.content?.trim()).sort((a, b) => a.createdTimestamp - b.createdTimestamp).map((message) => "[" + channel.name + "] " + (message.member?.displayName || message.author.username) + " : " + normalizeTranscriptText(message.content).slice(0, 220)));
-    } catch {}
-    if (recentMessages.length >= 12) break;
-  }
+      return [...fetched.values()]
+        .filter((message) => !message.author.bot && message.content?.trim())
+        .sort((a, b) => a.createdTimestamp - b.createdTimestamp)
+        .map((message) => "[" + channel.name + "] " + (message.member?.displayName || message.author.username) + " : " + normalizeTranscriptText(message.content).slice(0, 220));
+    } catch {
+      return [];
+    }
+  }));
+  const recentMessages = fetchedChannelMessages.flat().slice(0, 12);
   return [
     "Nom du serveur : " + guild.name,
     guild.description ? "Description : " + guild.description : "",
