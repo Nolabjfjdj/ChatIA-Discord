@@ -49,7 +49,7 @@ const GROQ_BASE_URL = process.env.GROQ_BASE_URL || "https://api.groq.com/openai/
 const GROQ_CHAT_MODEL = process.env.GROQ_CHAT_MODEL || "llama-3.1-8b-instant";
 const GROQ_TRANSCRIBE_MODEL =
   process.env.GROQ_TRANSCRIBE_MODEL || "whisper-large-v3-turbo";
-const LLM_PROVIDER = (process.env.LLM_PROVIDER || "gemini").toLowerCase();
+const LLM_PROVIDER = (process.env.LLM_PROVIDER || "auto").toLowerCase();
 const GROQ_API_KEYS = [...new Set([
   process.env.GROQ_API_KEY,
   ...Object.entries(process.env)
@@ -122,12 +122,12 @@ const RECORDINGS_DIR = path.join(process.cwd(), "tmp-recordings");
 const STT_LANGUAGE = normalizeSttLanguage(BOT_LANGUAGE);
 const GOOGLE_TTS_LANGUAGE = normalizeGoogleTtsLanguage(BOT_LANGUAGE);
 
-if (LLM_PROVIDER !== "gemini" && GROQ_API_KEYS.length === 0) {
+if (["groq", "auto"].includes(LLM_PROVIDER) && GROQ_API_KEYS.length === 0) {
   console.error("Fehlende Umgebungsvariable: GROQ_API_KEY (erforderlich fuer den Groq-Provider).");
   process.exit(1);
 }
 
-if (LLM_PROVIDER === "gemini" && GEMINI_API_KEYS.length === 0) {
+if (["gemini", "auto"].includes(LLM_PROVIDER) && GEMINI_API_KEYS.length === 0 && LLM_PROVIDER === "gemini") {
   console.error("LLM_PROVIDER=gemini gesetzt, aber GEMINI_API_KEY oder GEMINI_API_KEYS fehlt.");
   process.exit(1);
 }
@@ -137,8 +137,8 @@ if (LLM_PROVIDER === "vertex" && !VERTEX_API_KEY) {
   process.exit(1);
 }
 
-if (!["groq", "vertex", "gemini"].includes(LLM_PROVIDER)) {
-  console.error("Ungueltiger LLM_PROVIDER: " + LLM_PROVIDER + ". Erlaubt: groq, vertex, gemini");
+if (!["auto", "groq", "vertex", "gemini"].includes(LLM_PROVIDER)) {
+  console.error("Ungueltiger LLM_PROVIDER: " + LLM_PROVIDER + ". Erlaubt: auto, groq, vertex, gemini");
   process.exit(1);
 }
 
@@ -1155,7 +1155,21 @@ async function transcribeAudio(filePath) {
 async function generateChatCompletionText(messages) {
   if (LLM_PROVIDER === "vertex") return generateChatCompletionTextWithVertex(messages);
   if (LLM_PROVIDER === "gemini") return generateChatCompletionTextWithGemini(messages);
-  return generateChatCompletionTextWithGroq(messages);
+  if (LLM_PROVIDER === "groq") return generateChatCompletionTextWithGroq(messages);
+
+  if (GROQ_API_KEYS.length > 0) {
+    try {
+      return await generateChatCompletionTextWithGroq(messages);
+    } catch (error) {
+      log("Groq indisponible, bascule vers Gemini.", error?.message || error);
+    }
+  }
+
+  if (GEMINI_API_KEYS.length > 0) {
+    return generateChatCompletionTextWithGemini(messages);
+  }
+
+  throw new Error("Aucun fournisseur IA disponible : configure GROQ_API_KEY ou GEMINI_API_KEY.");
 }
 
 async function generateChatCompletionTextWithGroq(messages) {
