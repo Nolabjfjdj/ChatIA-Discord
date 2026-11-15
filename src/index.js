@@ -2101,9 +2101,13 @@ client.once("ready", async () => {
   log(`Bot online als ${client.user.tag}`);
   log(
     `LLM Provider: ${LLM_PROVIDER}${
-      LLM_PROVIDER === "groq"
-        ? ` (model=${GROQ_CHAT_MODEL})`
-        : ` (model=${VERTEX_MODEL}, location=${VERTEX_PROJECT_ID ? VERTEX_LOCATION : "express"})`
+      LLM_PROVIDER === "auto"
+        ? ` (Groq prioritaire: ${GROQ_CHAT_MODEL}, Gemini en secours)`
+        : LLM_PROVIDER === "groq"
+          ? ` (model=${GROQ_CHAT_MODEL})`
+          : LLM_PROVIDER === "gemini"
+            ? ` (model=${GEMINI_MODEL})`
+            : ` (model=${VERTEX_MODEL}, location=${VERTEX_PROJECT_ID ? VERTEX_LOCATION : "express"})`
     }`,
   );
   log(
