@@ -166,8 +166,8 @@ const autoJoinReconcileQueues = new Map();
 /** @type {Map<string, any>} */
 const channelMemories = new Map();
 
-function isAutoJoinEnabled(guildId) {
-  return autoJoinOverrides.has(guildId) ? autoJoinOverrides.get(guildId) : AUTO_JOIN_VOICE_CHANNELS_DEFAULT;
+function isAutoJoinEnabled() {
+  return false;
 }
 
 function getDialogueLogSettings(guildId) {
@@ -1982,9 +1982,6 @@ async function registerSlashCommands() {
       .addSubcommand(sub => sub.setName("off").setDescription("Désactiver l’affichage des dialogues"))
       .addSubcommand(sub => sub.setName("salon").setDescription("Choisir le salon de journalisation").addChannelOption(option => option.setName("salon").setDescription("Salon texte où envoyer les dialogues").setRequired(true).addChannelTypes(ChannelType.GuildText)))
       .addSubcommand(sub => sub.setName("reset").setDescription("Revenir au salon texte par défaut")),
-    new SlashCommandBuilder().setName("autoreconnect").setDescription("Configurer la reconnexion vocale automatique").setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
-      .addSubcommand(sub => sub.setName("on").setDescription("Activer la reconnexion automatique"))
-      .addSubcommand(sub => sub.setName("off").setDescription("Désactiver la reconnexion automatique")),
     new SlashCommandBuilder().setName("help").setDescription("Afficher l’aide du bot")
   ].map(command => command.toJSON());
   const rest = new REST({ version: "10" }).setToken(process.env.DISCORD_TOKEN);
@@ -1998,7 +1995,7 @@ async function handleSlashCommand(interaction) {
     return;
   }
   const command = interaction.commandName;
-  if (["join", "leave", "say", "autoreconnect"].includes(command)) {
+  if (["join", "leave", "say"].includes(command)) {
     const member = await interaction.guild.members.fetch(interaction.user.id);
     if (!member.permissions.has(PermissionFlagsBits.ManageGuild)) {
       await interaction.reply({ content: "Il faut la permission **Gérer le serveur** pour utiliser cette commande.", ephemeral: true });
@@ -2017,11 +2014,8 @@ async function handleSlashCommand(interaction) {
       return;
     }
     if (command === "leave") {
-      if (isAutoJoinEnabled(interaction.guild.id)) setAutoJoinCooldown(interaction.guild.id, AUTO_JOIN_MANUAL_LEAVE_COOLDOWN_MS);
       await destroySession(interaction.guild.id);
-      await reply(isAutoJoinEnabled(interaction.guild.id)
-        ? `Salon vocal quitté. Reconnexion automatique suspendue pendant ${Math.round(AUTO_JOIN_MANUAL_LEAVE_COOLDOWN_MS / 1000)} s.`
-        : "Salon vocal quitté.");
+      await reply("Salon vocal quitté.");
       return;
     }
     if (command === "chat") {
@@ -2050,7 +2044,7 @@ async function handleSlashCommand(interaction) {
       await reply(`Je prononce : "${clipped}"`);
       return;
     }
-    if (command === "logs" || command === "autoreconnect") {
+    if (command === "logs") {
       const member = await interaction.guild.members.fetch(interaction.user.id);
       if (!member.permissions.has(PermissionFlagsBits.ManageGuild)) {
         await reply({ content: "Il faut la permission **Gérer le serveur** pour modifier ce réglage.", ephemeral: true });
@@ -2070,9 +2064,6 @@ async function handleSlashCommand(interaction) {
           settings.channelId = null;
           await reply("Le salon des dialogues revient au salon texte par défaut.");
         }
-      } else {
-        if (action === "on") { autoJoinOverrides.set(interaction.guild.id, true); await reply("Reconnexion automatique activée."); }
-        else { autoJoinOverrides.set(interaction.guild.id, false); await reply("Reconnexion automatique désactivée."); }
       }
       return;
     }
@@ -2084,7 +2075,6 @@ async function handleSlashCommand(interaction) {
         "/say texte - Faire prononcer un texte",
         "/chat message - Discuter par écrit (la réponse est aussi prononcée si je suis en vocal)",
         "/logs on, /logs off, /logs salon, /logs reset - Configurer les journaux (permission Gérer le serveur)",
-        "/autoreconnect on ou /autoreconnect off - Configurer la reconnexion automatique (permission Gérer le serveur)",
         "/help - Afficher cette aide"
       ].join("\n"), ephemeral: true });
     }
@@ -2130,9 +2120,6 @@ client.once("ready", async () => {
     log(
       `[${guild.id}] Auto-Join Voice: ${isAutoJoinEnabled(guild.id) ? "aktiv" : "deaktiviert"} (leave cooldown=${AUTO_JOIN_MANUAL_LEAVE_COOLDOWN_MS}ms)`,
     );
-    if (isAutoJoinEnabled(guild.id)) {
-      enqueueAutoJoinReconcile(guild, "startup");
-    }
   }
 
   // --- CLOUD RUN HEALTH-CHECK SERVER ---
@@ -2147,18 +2134,8 @@ client.once("ready", async () => {
       log(`[System] Health-check server listening on port ${PORT} (Cloud Run compatibility)`);
   });
 
-  // La connexion vocale est gérée par le mécanisme Auto-Join ci-dessus.
+  // La connexion vocale est contrôlée exclusivement par /join et /leave.
 
-});
-
-client.on("voiceStateUpdate", (oldState, newState) => {
-  const guild = newState.guild || oldState.guild;
-  if (!guild || !isAutoJoinEnabled(guild.id)) return;
-
-  const member = newState.member || oldState.member;
-  if (member?.user?.bot) return;
-
-  enqueueAutoJoinReconcile(guild, "voice-state-update");
 });
 
 client.on("error", (error) => {
